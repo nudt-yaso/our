@@ -1,0 +1,17 @@
+{
+  "name": "拾玖 · 时光",
+  "short_name": "拾玖时光",
+  "description": "一册纸上的恋爱纪念册：第几天、纪念日、心动、时间胶囊与一百件小事。",
+  "lang": "zh-CN",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eee4d3",
+  "theme_color": "#b7402b",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

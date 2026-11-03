@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="paper">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eee4d3">
+<meta name="description" content="拾玖·时光 —— 我们的恋爱纪念册。记录在一起的第几天、纪念日、心动瞬间、时间胶囊与100件小事。">
+<title>拾玖 · 时光 | 我们的恋爱纪念册</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="拾玖时光">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23b7402b'/%3E%3Ctext x='50' y='50' text-anchor='middle' dominant-baseline='central' font-size='62' fill='%23fdf3ea' font-family='serif'%3E%E6%8B%BE%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<canvas id="sky" aria-hidden="true"></canvas>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="glow" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <button class="brand" id="brand" type="button" title="拾玖 · 时光" aria-label="拾玖 · 时光">
+    <span class="brand-seal" aria-hidden="true"><b>拾</b><b>玖</b></span>
+    <span class="brand-word">时光</span>
+    <span class="brand-rule" aria-hidden="true"></span>
+    <span class="brand-sub">since 10.19</span>
+  </button>
+  <div class="top-actions">
+    <button class="icon-btn" id="btn-poster" type="button" title="生成纪念卡" aria-label="生成纪念卡">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.2" y="5" width="17.6" height="14" rx="2.2"/><path d="M3.2 15.2l4.3-3.7 3.4 3 4-4.4 5.9 5.1"/><circle cx="8.4" cy="9.3" r="1.2"/></svg>
+    </button>
+    <button class="icon-btn" id="btn-settings" type="button" title="设置" aria-label="设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 首页 · 心跳 ============ -->
+  <section class="page is-active" id="page-home" data-page="home">
+    <div class="hero card">
+      <div class="hero-main">
+        <div class="hero-eyebrow" id="h-eyebrow">我们在一起的第</div>
+        <div class="hero-count">
+          <span class="hero-num" id="h-days">0</span>
+          <span class="hero-unit">天</span>
+        </div>
+        <div class="hero-clock" id="h-clock">
+          <span class="ck"><b id="h-h">00</b><i>时</i></span>
+          <span class="ck-sep" aria-hidden="true">·</span>
+          <span class="ck"><b id="h-m">00</b><i>分</i></span>
+          <span class="ck-sep" aria-hidden="true">·</span>
+          <span class="ck"><b id="h-s">00</b><i>秒</i></span>
+        </div>
+        <div class="hero-since" id="h-since">自 —— 起</div>
+        <div class="hero-names" id="h-names"></div>
+      </div>
+      <div class="hero-side" aria-hidden="true">
+        <div class="hero-vdate" id="h-vdate"></div>
+        <div class="hero-stamp"><span>今日</span><span>已记</span></div>
+      </div>
+    </div>
+
+    <div class="banner" id="banner-year" hidden>
+      <span class="banner-txt">先确认一下：我们的故事开始于 <b id="banner-date">—</b></span>
+      <span class="banner-acts">
+        <button class="link-btn" id="banner-fix" type="button">年份不对？改一下</button>
+        <button class="banner-x" id="banner-x" type="button" aria-label="关闭">×</button>
+      </span>
+    </div>
+
+    <div class="card next-card">
+      <div class="next-ring-wrap">
+        <div class="ring-ticks" aria-hidden="true"></div>
+        <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop class="rs1" offset="0%"/><stop class="rs2" offset="100%"/>
+            </linearGradient>
+          </defs>
+          <circle class="ring-bg" cx="60" cy="60" r="52"/>
+          <circle class="ring-fg" id="home-ring" cx="60" cy="60" r="52" transform="rotate(-90 60 60)"/>
+        </svg>
+        <div class="next-ring-txt">
+          <b id="h-next-left">—</b>
+          <span>天后</span>
+        </div>
+      </div>
+      <div class="next-info">
+        <div class="next-k">下一个纪念日</div>
+        <div class="next-name" id="h-next-name">—</div>
+        <div class="next-date" id="h-next-date">—</div>
+        <div class="next-prog"><i id="h-next-bar"></i></div>
+      </div>
+    </div>
+
+    <div class="card quote-card">
+      <div class="q-mark" aria-hidden="true">“</div>
+      <p class="q-text" id="h-quote">—</p>
+      <div class="q-foot">
+        <span class="q-tag" id="h-quote-tag">今日情话</span>
+        <button class="link-btn" id="h-quote-next" type="button">换一句</button>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <button class="tile tile-rose" id="h-add" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5S4 15.6 4 10.3A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 8 2.7c0 5.3-8 10.2-8 10.2z"/></svg>
+        <b>记一笔心动</b>
+        <i>把此刻存进恋爱银行</i>
+      </button>
+      <button class="tile tile-gold" id="h-checkin" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2.4"/><path d="M8 3v4M16 3v4M3 10h18"/><path class="ck-tick" d="M8.5 15.2l2.3 2.3 4.4-4.6"/></svg>
+        <b id="h-checkin-t">今日打卡</b>
+        <i id="h-checkin-s">连续 0 天</i>
+      </button>
+    </div>
+
+    <div class="card stats" id="h-stats">
+      <div class="stat"><b id="s-moments">0</b><i>次心动</i></div>
+      <div class="stat"><b id="s-memories">0</b><i>篇回忆</i></div>
+      <div class="stat"><b id="s-bucket">0</b><i>件小事</i></div>
+      <div class="stat"><b id="s-capsules">0</b><i>封胶囊</i></div>
+    </div>
+
+    <div class="sec-head">
+      <h3>最近的心动</h3>
+      <button class="link-btn" data-goto="memories" type="button">全部 →</button>
+    </div>
+    <div class="mini-list" id="h-recent"></div>
+
+    <p class="colophon">— 这一册，只写给你们两个人 —</p>
+  </section>
+
+  <!-- ============ 纪念日 ============ -->
+  <section class="page" id="page-days" data-page="days">
+    <div class="page-head">
+      <h2>我们的纪念日</h2>
+      <p>有些日子，值得被一遍遍数着。</p>
+    </div>
+
+    <div class="card ann-hero">
+      <div class="ann-hero-k">距离</div>
+      <div class="ann-hero-name" id="ann-hero-name">—</div>
+      <div class="ann-hero-count"><b id="ann-hero-num">—</b><span>天</span></div>
+      <div class="ann-hero-date" id="ann-hero-date">—</div>
+      <div class="ann-hero-bar"><i id="ann-hero-bar"></i></div>
+      <div class="ann-start" id="ann-start"></div>
+    </div>
+
+    <div class="sec-head">
+      <h3>里程碑</h3>
+      <span class="sec-note">按在一起的天数自动计算</span>
+    </div>
+    <div class="ms-list" id="ms-list"></div>
+
+    <div class="sec-head">
+      <h3>自定义纪念日</h3>
+      <button class="btn btn-sm" id="btn-add-ann" type="button">＋ 添加</button>
+    </div>
+    <div class="ann-list" id="ann-list"></div>
+  </section>
+
+  <!-- ============ 拾光集 ============ -->
+  <section class="page" id="page-memories" data-page="memories">
+    <div class="page-head">
+      <h2>拾光集</h2>
+      <p>把散落的日常，一件件拾起来。</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="chips" id="mem-chips">
+        <button class="chip is-on" data-filter="all" type="button">全部</button>
+        <button class="chip" data-filter="heart" type="button">心动</button>
+        <button class="chip" data-filter="memory" type="button">回忆</button>
+      </div>
+      <button class="btn btn-sm" id="btn-add-mem" type="button">写一篇</button>
+    </div>
+
+    <div class="timeline" id="timeline"></div>
+  </section>
+
+  <!-- ============ 时间胶囊 ============ -->
+  <section class="page" id="page-capsule" data-page="capsule">
+    <div class="page-head">
+      <h2>时间胶囊</h2>
+      <p>写给未来的我们。写下的那一刻，它就封上了蜡。</p>
+    </div>
+
+    <div class="card capsule-intro">
+      <div class="ci-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.4"/><path d="M3.5 7.5 12 13l8.5-5.5"/><path d="M12 17.4c-1.6-1.2-2.6-2.3-2.6-3.4a1.4 1.4 0 0 1 2.6-.7 1.4 1.4 0 0 1 2.6.7c0 1.1-1 2.2-2.6 3.4z"/></svg>
+      </div>
+      <div class="ci-text">
+        <b>封一封信，寄往未来</b>
+        <span>在解锁之前，连你自己也读不到它。</span>
+      </div>
+      <button class="btn btn-sm" id="btn-add-capsule" type="button">写信</button>
+    </div>
+
+    <div class="capsule-list" id="capsule-list"></div>
+
+    <div class="sec-head">
+      <h3>每日一问</h3>
+      <span class="sec-note">每天一题，答给对方看</span>
+    </div>
+    <div class="card q-card">
+      <div class="q-day" id="q-day">第 1 问</div>
+      <p class="q-ask" id="q-ask">—</p>
+      <textarea id="q-answer" rows="3" placeholder="写下你的回答…"></textarea>
+      <div class="q-foot">
+        <span class="q-state" id="q-state"></span>
+        <button class="btn btn-sm" id="q-save" type="button">收下这句</button>
+      </div>
+    </div>
+    <div class="qa-list" id="q-history"></div>
+  </section>
+
+  <!-- ============ 100件小事 ============ -->
+  <section class="page" id="page-bucket" data-page="bucket">
+    <div class="page-head">
+      <h2>一百件小事</h2>
+      <p>爱情不是一件大事，是一百件小事。</p>
+    </div>
+
+    <div class="card bucket-head">
+      <div class="bh-top">
+        <b><span id="b-done">0</span> / 100</b>
+        <button class="btn btn-sm" id="btn-random" type="button">随机抽一件</button>
+      </div>
+      <div class="bh-bar"><i id="b-bar"></i></div>
+      <div class="bh-tip" id="b-tip">先划掉第一件吧。</div>
+    </div>
+
+    <div class="chips chips-wrap" id="b-chips"></div>
+    <div class="bucket-list" id="bucket-list"></div>
+  </section>
+
+</main>
+
+<nav class="tabbar" id="tabbar" aria-label="主导航">
+  <button class="tab is-on" data-page="home" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.2S4.2 15.4 4.2 10.2A4.2 4.2 0 0 1 12 7.6a4.2 4.2 0 0 1 7.8 2.6c0 5.2-7.8 10-7.8 10z"/></svg>
+    <span>心跳</span>
+  </button>
+  <button class="tab" data-page="days" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2.4"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+    <span>纪念日</span>
+  </button>
+  <button class="tab" data-page="memories" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M12 3.2v2.6M12 18.2v2.6M3.2 12h2.6M18.2 12h2.6M6 6l1.9 1.9M16.1 16.1 18 18M18 6l-1.9 1.9M7.9 16.1 6 18"/></svg>
+    <span>拾光集</span>
+  </button>
+  <button class="tab" data-page="capsule" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2.4"/><path d="M3.5 7.5 12 13l8.5-5.5"/></svg>
+    <span>胶囊</span>
+  </button>
+  <button class="tab" data-page="bucket" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.4 6h10.8M9.4 12h10.8M9.4 18h10.8"/><circle cx="4.8" cy="6" r="1.3"/><circle cx="4.8" cy="12" r="1.3"/><circle cx="4.8" cy="18" r="1.3"/></svg>
+    <span>小事</span>
+  </button>
+</nav>
+
+<div class="modal-root" id="modal-root" hidden>
+  <div class="modal-mask" data-close="1"></div>
+  <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap" aria-live="polite"></div>
+<div class="fx" id="fx" aria-hidden="true"></div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

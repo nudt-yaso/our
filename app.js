@@ -1,0 +1,1947 @@
+/* ============================================================
+   拾玖 · 时光  —  app.js
+   恋爱纪念册 · 主逻辑
+   ============================================================ */
+(function () {
+  'use strict';
+
+  const D = window.LOVE_DATA;
+  const KEY = 'shijiu.love.v1';
+  const DEFAULT_START = '2026-10-19T23:45';
+  const DAY = 86400000;
+
+  /* ==================== 工具 ==================== */
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const pad = (n, l) => String(n).padStart(l || 2, '0');
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const parseDT = (s) => {
+    let str = String(s == null ? '' : s).trim().replace(' ', 'T');
+    // 只有日期时按本地 0 点解析（避免被当成 UTC）
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) str += 'T00:00:00';
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const fmtDate = (d) => `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  const fmtMD = (d) => `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+  const fmtDT = (d) => `${fmtDate(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const today0 = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+  const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+
+  /* 汉字数字：二〇二六年十月十九日 · 二十三时四十五分 */
+  const CN_D = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
+  function cnNum(n) {
+    n = Math.max(0, Math.min(99, Math.floor(n)));
+    if (n < 10) return CN_D[n];
+    if (n === 10) return '十';
+    if (n < 20) return '十' + CN_D[n % 10];
+    const t = Math.floor(n / 10), o = n % 10;
+    return CN_D[t] + '十' + (o ? CN_D[o] : '');
+  }
+  function cnYear(y) { return String(y).split('').map((c) => CN_D[+c] || c).join(''); }
+  function cnDate(d) { return `${cnYear(d.getFullYear())}年${cnNum(d.getMonth() + 1)}月${cnNum(d.getDate())}日`; }
+  function cnClock(d) { return `${cnNum(d.getHours())}时${cnNum(d.getMinutes())}分`; }
+
+  /* ==================== 状态 ==================== */
+  const DEFAULT_CONFIG = {
+    start: DEFAULT_START,
+    me: '我',
+    you: '你',
+    theme: 'auto',
+    secret: '1919',
+    secretMsg: '无论多久，我还是会选择你。',
+    sync: { provider: 'github', token: '', gist: '', lastAt: 0 }
+  };
+
+  /* ==================== 主题：纸 / 夜 / 胭脂 ==================== */
+  /* 老版本存的是 aurora / dusk / sea，这里静默迁移到新的三套纸色 */
+  const THEME_MAP = {
+    auto: 'auto', paper: 'paper', night: 'night', rose: 'rose',
+    aurora: 'night', dusk: 'rose', sea: 'paper'
+  };
+  const THEME_LABEL = { auto: '随时刻', paper: '宣纸', night: '墨夜', rose: '胭脂' };
+  const THEME_COLOR = { paper: '#eee4d3', night: '#0e0c12', rose: '#f3e3e2' };
+
+  function normalizeTheme(t) { return THEME_MAP[t] || 'auto'; }
+
+  /* 选「随时刻」时：入夜（19 点到清晨 5 点）自动翻到墨夜 */
+  function resolveTheme() {
+    const t = normalizeTheme(state.config.theme);
+    if (t !== 'auto') return t;
+    const h = new Date().getHours();
+    return (h >= 19 || h < 5) ? 'night' : 'paper';
+  }
+
+  function applyTheme() {
+    const t = resolveTheme();
+    document.documentElement.dataset.theme = t;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', THEME_COLOR[t] || THEME_COLOR.paper);
+    return t;
+  }
+
+  function blankState() {
+    return {
+      v: 1,
+      config: { ...DEFAULT_CONFIG },
+      moments: [],
+      anns: [{ id: uid(), name: '每个月的那一天', date: DEFAULT_START.slice(0, 10), repeat: 'month', emoji: '🌙' }],
+      capsules: [],
+      bucket: {},
+      checkins: {},
+      qa: [],
+      seen: { banner: false }
+    };
+  }
+
+  let state = load();
+
+  function load() {
+    let raw = null;
+    try { raw = localStorage.getItem(KEY); } catch (e) { }
+    if (!raw) return blankState();
+    try {
+      const o = JSON.parse(raw);
+      const base = blankState();
+      const st = {
+        ...base, ...o,
+        config: { ...base.config, ...(o.config || {}) },
+        anns: Array.isArray(o.anns) ? o.anns : base.anns,
+        moments: Array.isArray(o.moments) ? o.moments : [],
+        capsules: Array.isArray(o.capsules) ? o.capsules : [],
+        qa: Array.isArray(o.qa) ? o.qa : [],
+        bucket: o.bucket && typeof o.bucket === 'object' ? o.bucket : {},
+        checkins: o.checkins && typeof o.checkins === 'object' ? o.checkins : {},
+        seen: { ...base.seen, ...(o.seen || {}) }
+      };
+      st.config.theme = normalizeTheme(st.config.theme);
+      return st;
+    } catch (e) {
+      console.warn('数据读取失败，已重置', e);
+      return blankState();
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+      return true;
+    } catch (e) {
+      toast('存储空间不足啦，试试删掉几张照片～');
+      return false;
+    }
+  }
+
+  /* ==================== 时间核心 ==================== */
+  function startDate() { return parseDT(state.config.start); }
+  function elapsedMs() { return Date.now() - startDate().getTime(); }
+  function elapsedDays() { return Math.floor(elapsedMs() / DAY); }
+  /* 第 N 天：含开始当天（10 月 19 日开始，10 月 19 日就是第 1 天） */
+  function dayIndex(d) { return Math.floor((dayStart(d || new Date()) - dayStart(startDate())) / DAY) + 1; }
+  function todayIndex() { return dayIndex(new Date()); }
+
+  /* 里程碑的日期：天数型按 +（n-1）天，周年型永远落在同一个「月·日」 */
+  function milestoneTarget(m) {
+    const s = startDate();
+    if (m.type === 'year') {
+      return new Date(s.getFullYear() + m.n, s.getMonth(), s.getDate(), s.getHours(), s.getMinutes());
+    }
+    return new Date(s.getTime() + (m.n - 1) * DAY);
+  }
+
+  function milestoneList() {
+    return D.MILESTONES
+      .map((m) => ({ ...m, date: milestoneTarget(m) }))
+      .sort((a, b) => a.date - b.date);
+  }
+
+  function nextMilestone() {
+    const list = milestoneList();
+    const t = today0();
+    return list.find((m) => dayStart(m.date) >= t) || list[list.length - 1];
+  }
+
+  function prevMilestone(nx) {
+    const list = milestoneList();
+    let prev = null;
+    for (const m of list) if (dayStart(m.date) < dayStart(nx.date)) prev = m;
+    return prev;
+  }
+
+  /* 从现在到某个日期的日历天数（今天是 0） */
+  function daysUntil(d) { return Math.round((dayStart(d) - today0()) / DAY); }
+
+  /* 自定义纪念日的下一次 */
+  function nextAnn(ann) {
+    const base = parseDT(ann.date + 'T00:00:00');
+    const t = today0();
+    if (ann.repeat === 'once') return base < t ? null : base;
+    if (ann.repeat === 'month') {
+      const d = Math.min(base.getDate(), 28);
+      let c = new Date(t.getFullYear(), t.getMonth(), d);
+      if (c < t) c = new Date(t.getFullYear(), t.getMonth() + 1, d);
+      return c;
+    }
+    let y = new Date(t.getFullYear(), base.getMonth(), base.getDate());
+    if (y < t) y = new Date(t.getFullYear() + 1, base.getMonth(), base.getDate());
+    return y;
+  }
+
+  /* ==================== 小工具：toast / fx ==================== */
+  function toast(msg, ms) {
+    const w = $('#toast-wrap');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    w.appendChild(el);
+    setTimeout(() => el.remove(), (ms || 2600) + 200);
+  }
+
+  function burst(x, y, emoji, n) {
+    const fx = $('#fx');
+    const count = n || 10;
+    const pool = emoji ? [emoji] : ['💗', '✨', '💫', '🌸', '♡'];
+    for (let i = 0; i < count; i++) {
+      const s = document.createElement('span');
+      s.className = 'fx-heart';
+      s.textContent = pool[Math.floor(Math.random() * pool.length)];
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 50 + Math.random() * 120;
+      s.style.left = x + 'px';
+      s.style.top = y + 'px';
+      s.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
+      s.style.setProperty('--dy', (Math.sin(ang) * dist - 40) + 'px');
+      s.style.setProperty('--sc', (0.6 + Math.random()).toFixed(2));
+      s.style.setProperty('--rot', (Math.random() * 90 - 45).toFixed(0) + 'deg');
+      s.style.fontSize = (12 + Math.random() * 12) + 'px';
+      fx.appendChild(s);
+      setTimeout(() => s.remove(), 1600);
+    }
+  }
+
+  function burstAt(el) {
+    const r = el.getBoundingClientRect();
+    burst(r.left + r.width / 2, r.top + r.height / 2);
+  }
+
+  /* ==================== 弹层 ==================== */
+  const modalRoot = $('#modal-root');
+  const modalEl = $('#modal');
+  let modalCloser = null;
+
+  function openModal(html, onMount, opts) {
+    modalEl.innerHTML = html;
+    modalEl.classList.toggle('is-wide', !!(opts && opts.wide));
+    modalRoot.hidden = false;
+    document.body.style.overflow = 'hidden';
+    modalCloser = onMount ? (onMount(modalEl) || null) : null;
+  }
+  function closeModal() {
+    if (typeof modalCloser === 'function') { try { modalCloser(); } catch (e) { } }
+    modalCloser = null;
+    modalRoot.hidden = true;
+    modalEl.classList.remove('is-wide');
+    modalEl.innerHTML = '';
+    document.body.style.overflow = '';
+  }
+
+  /* 点开一张照片：整屏纸片里看大图 */
+  function openLightbox(src, cap) {
+    openModal(`
+      <img class="lb-img" src="${esc(src)}" alt="">
+      ${cap ? `<div class="lb-cap">${esc(cap)}</div>` : ''}
+    `, null, { wide: true });
+  }
+
+  modalRoot.addEventListener('click', (e) => {
+    if (e.target.dataset && e.target.dataset.close) closeModal();
+    const closeBtn = e.target.closest('[data-close]');
+    if (closeBtn) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modalRoot.hidden) closeModal();
+  });
+
+  function moodPicker(selected) {
+    return `<div class="emoji-pick" data-mood-pick>
+      ${D.MOODS.map((m, i) => `<button type="button" data-mood="${i}" class="${i === selected ? 'is-on' : ''}" title="${esc(m.k)}">${m.e}</button>`).join('')}
+    </div>`;
+  }
+
+  function bindMoodPicker(scope, initial) {
+    let cur = initial;
+    scope.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mood]');
+      if (!b) return;
+      cur = Number(b.dataset.mood);
+      $$('[data-mood]', scope).forEach((x) => x.classList.toggle('is-on', Number(x.dataset.mood) === cur));
+    });
+    return () => cur;
+  }
+
+  /* ==================== 首页 ==================== */
+  let lastShownDay = null;
+
+  function renderHome() {
+    const ms = elapsedMs();
+    const idx = todayIndex();
+    const neg = idx < 1;
+    const days = neg ? 1 - idx : idx;
+    const rem = Math.abs(ms) % DAY;
+    const h = Math.floor(rem / 3600000);
+    const m = Math.floor((rem % 3600000) / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+
+    const daysEl = $('#h-days');
+    if (daysEl.textContent !== String(days)) {
+      daysEl.textContent = days;
+      if (lastShownDay !== null) {
+        daysEl.classList.remove('pop');
+        void daysEl.offsetWidth;
+        daysEl.classList.add('pop');
+      }
+      lastShownDay = days;
+    }
+    $('#h-eyebrow').textContent = neg ? '离我们的故事开始还有' : '我们在一起的第';
+    $('#h-h').textContent = pad(h);
+    $('#h-m').textContent = pad(m);
+    $('#h-s').textContent = pad(s);
+
+    const sd = startDate();
+    $('#h-since').textContent = `自 ${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())} 起`;
+    const brandSub = $('.brand-sub');
+    if (brandSub) brandSub.textContent = `since ${pad(sd.getMonth() + 1)}.${pad(sd.getDate())}`;
+    $('#h-names').innerHTML = `<span>${esc(state.config.me)}</span><span class="hn-heart">♥</span><span>${esc(state.config.you)}</span>`;
+
+    // 竖排的汉字日子 + 页面标题
+    const vd = $('#h-vdate');
+    if (vd) vd.textContent = `始于${cnDate(sd)}`;
+    document.title = neg ? `还有 ${days} 天 · 拾玖时光` : `第 ${days} 天 · 拾玖时光`;
+
+    // 下一个纪念日
+    const nx = nextMilestone();
+    const pv = prevMilestone(nx);
+    const anchor = pv ? dayStart(pv.date) : dayStart(startDate());
+    const span = Math.max(1, (dayStart(nx.date) - anchor) / DAY);
+    const doneSpan = Math.max(0, (today0() - anchor) / DAY);
+    const pct = Math.min(100, Math.max(0, (doneSpan / span) * 100));
+    const left = Math.max(0, daysUntil(nx.date));
+
+    $('#h-next-left').textContent = left;
+    $('#h-next-name').textContent = `${nx.icon} ${nx.name}`;
+    $('#h-next-date').textContent = fmtDate(nx.date);
+    const ring = $('#home-ring');
+    const C = 2 * Math.PI * (Number(ring.getAttribute('r')) || 52);
+    ring.style.strokeDashoffset = String(C * (1 - pct / 100));
+    $('#h-next-bar').style.width = pct + '%';
+
+    // 情话
+    if (!$('#h-quote').dataset.pinned) setQuote(quoteOfToday());
+
+    // 打卡状态
+    const tKey = ymd(new Date());
+    const done = !!state.checkins[tKey];
+    const tile = $('#h-checkin');
+    tile.classList.toggle('is-done', done);
+    // 打过卡，就在首页钤一枚「今日已记」
+    const heroCard = document.querySelector('.hero');
+    if (heroCard) heroCard.classList.toggle('is-stamped', done);
+    $('#h-checkin-t').textContent = done ? '今天已打卡' : '今日打卡';
+    $('#h-checkin-s').textContent = done ? `连续 ${streak()} 天` : `连续 ${streak()} 天，别断哦`;
+
+    // 统计
+    const hearts = state.moments.filter((x) => x.kind === 'heart').length;
+    const mems = state.moments.filter((x) => x.kind === 'memory').length;
+    $('#s-moments').textContent = hearts;
+    $('#s-memories').textContent = mems;
+    $('#s-bucket').textContent = Object.keys(state.bucket).length;
+    $('#s-capsules').textContent = state.capsules.length;
+
+    // 最近
+    renderRecent();
+    renderBanner();
+  }
+
+  function quoteOfToday() {
+    const t = new Date();
+    const seed = Math.floor(Date.now() / DAY) + t.getFullYear();
+    return D.QUOTES[seed % D.QUOTES.length];
+  }
+  function setQuote(q, animate) {
+    const el = $('#h-quote');
+    if (!animate) {
+      // 首屏直接显示，避免闪一下空白
+      el.style.transition = 'none';
+      el.textContent = q;
+      el.style.opacity = 1;
+      return;
+    }
+    el.style.transition = 'opacity .35s';
+    el.style.opacity = 0;
+    setTimeout(() => {
+      el.textContent = q;
+      el.style.opacity = 1;
+    }, 180);
+  }
+
+  const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const weekday = (d) => WEEK[d.getDay()];
+
+  function streak() {
+    let n = 0;
+    const d = today0();
+    // 今天没打卡就从昨天开始数
+    if (!state.checkins[ymd(d)]) d.setDate(d.getDate() - 1);
+    while (state.checkins[ymd(d)]) { n++; d.setDate(d.getDate() - 1); }
+    return n;
+  }
+
+  function renderRecent() {
+    const box = $('#h-recent');
+    const list = state.moments.slice().sort((a, b) => b.at.localeCompare(a.at)).slice(0, 3);
+    if (!list.length) {
+      box.innerHTML = `<div class="mini-empty">还没有记录。写下第一笔心动吧，那会是很久以后最珍贵的东西。</div>`;
+      return;
+    }
+    box.innerHTML = list.map((x) => {
+      const moodObj = D.MOODS[x.mood] || null;
+      const d = parseDT(x.at);
+      const text = x.kind === 'heart' ? x.text : (x.title || x.text);
+      return `<button class="mini" type="button" data-goto="memories">
+        <span class="mini-emoji">${moodObj ? moodObj.e : (x.kind === 'memory' ? '📖' : '💗')}</span>
+        <span class="mini-body">
+          <span class="mini-txt">${esc(text)}</span>
+          <span class="mini-time">${fmtMD(d)} · 第 ${dayIndex(d)} 天</span>
+        </span>
+      </button>`;
+    }).join('');
+  }
+
+  function renderBanner() {
+    const b = $('#banner-year');
+    if (state.seen.banner) { b.hidden = true; return; }
+    b.hidden = false;
+    const sd = startDate();
+    $('#banner-date').textContent = `${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())}`;
+  }
+
+  /* ==================== 纪念日页 ==================== */
+  function renderDays() {
+    const nx = nextMilestone();
+    const pv = prevMilestone(nx);
+    const anchor = pv ? dayStart(pv.date) : dayStart(startDate());
+    const span = Math.max(1, (dayStart(nx.date) - anchor) / DAY);
+    const doneSpan = Math.max(0, (today0() - anchor) / DAY);
+    const pct = Math.min(100, Math.max(0, (doneSpan / span) * 100));
+    const left = Math.max(0, daysUntil(nx.date));
+
+    $('#ann-hero-name').textContent = `${nx.icon} ${nx.name}`;
+    $('#ann-hero-num').textContent = left;
+    $('#ann-hero-date').textContent = fmtDate(nx.date) + (left === 0 ? ' · 就是今天' : '');
+    $('#ann-hero-bar').style.width = pct + '%';
+
+    const sd = startDate();
+    $('#ann-start').textContent = `起点 · ${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())}`;
+
+    // 里程碑
+    const ms = $('#ms-list');
+    ms.innerHTML = milestoneList().map((m) => {
+      const target = m.date;
+      const dl = daysUntil(target);
+      const isToday = dl === 0;
+      const isPast = dl < 0;
+      const cls = ['ms'];
+      if (isPast) cls.push('is-past');
+      if (isToday) cls.push('is-today', 'is-now');
+      const right = isToday
+        ? `<div class="ms-num">就是今天<small>🎉</small></div>`
+        : isPast
+          ? `<div class="ms-num">已解锁</div>`
+          : `<div class="ms-num">${dl}<small>天后</small></div>`;
+      return `<div class="${cls.join(' ')}">
+        <div class="ms-ico">${m.icon}</div>
+        <div class="ms-body">
+          <div class="ms-name">${esc(m.name)}</div>
+          <div class="ms-date">${fmtDate(target)} · ${weekday(target)}</div>
+        </div>
+        <div class="ms-right">${right}</div>
+      </div>`;
+    }).join('');
+
+    // 自定义纪念日
+    const al = $('#ann-list');
+    const items = state.anns.map((a) => {
+      const nd = nextAnn(a);
+      const dl = nd ? daysUntil(nd) : null;
+      const sub = nd
+        ? (dl === 0 ? '就是今天 🎉' : `${dl} 天后 · ${fmtMD(nd)}`)
+        : '已经过去';
+      return `<div class="ann" data-ann="${a.id}">
+        <button class="ann-del" data-del-ann="${a.id}" title="删除">×</button>
+        <div class="ann-emoji">${a.emoji || '💌'}</div>
+        <div class="ann-name">${esc(a.name)}</div>
+        <div class="ann-left">${sub}</div>
+      </div>`;
+    }).join('');
+    al.innerHTML = items + `<button class="ann ann-add" type="button" id="ann-add-tile">＋ 添加纪念日</button>`;
+
+    const addTile = $('#ann-add-tile');
+    if (addTile) addTile.onclick = openAnnModal;
+  }
+
+  function openAnnModal() {
+    openModal(`
+      <h3>添加一个纪念日</h3>
+      <p class="modal-sub">生日、第一次见面、第一次牵手…… 都值得被记住。</p>
+      <div class="field">
+        <label>名字</label>
+        <input type="text" id="ann-name" maxlength="16" placeholder="比如：她的生日">
+      </div>
+      <div class="field">
+        <label>日期</label>
+        <input type="date" id="ann-date" value="${ymd(new Date())}">
+      </div>
+      <div class="field">
+        <label>重复</label>
+        <div class="seg" id="ann-repeat">
+          <button type="button" data-r="year" class="is-on">每年</button>
+          <button type="button" data-r="month">每月</button>
+          <button type="button" data-r="once">仅一次</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>图标</label>
+        <div class="emoji-pick" id="ann-emoji">
+          ${D.ANN_EMOJIS.map((e, i) => `<button type="button" data-e="${e}" class="${i === 0 ? 'is-on' : ''}">${e}</button>`).join('')}
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="ann-save" type="button">收好这个日子</button>
+      </div>
+    `, (root) => {
+      let repeat = 'year';
+      let emoji = D.ANN_EMOJIS[0];
+      $('#ann-repeat', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-r]'); if (!b) return;
+        repeat = b.dataset.r;
+        $$('[data-r]', root).forEach((x) => x.classList.toggle('is-on', x === b));
+      });
+      $('#ann-emoji', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-e]'); if (!b) return;
+        emoji = b.dataset.e;
+        $$('[data-e]', root).forEach((x) => x.classList.toggle('is-on', x === b));
+      });
+      $('#ann-save', root).onclick = () => {
+        const name = $('#ann-name', root).value.trim();
+        const date = $('#ann-date', root).value;
+        if (!name) { toast('给它起个名字吧'); return; }
+        if (!date) { toast('选一个日期'); return; }
+        state.anns.push({ id: uid(), name, date, repeat, emoji });
+        save(); renderDays(); setPageHero();
+        closeModal(); toast('记下了 🌙');
+      };
+    });
+  }
+
+  /* ==================== 拾光集 ==================== */
+  let memFilter = 'all';
+
+  function renderMemories() {
+    const box = $('#timeline');
+    let list = state.moments.slice().sort((a, b) => b.at.localeCompare(a.at));
+    if (memFilter !== 'all') list = list.filter((x) => x.kind === memFilter);
+
+    if (!list.length) {
+      box.innerHTML = `<div class="tl-empty">
+        <b>这里还很干净</b>
+        第一件想记下来的事，是什么？<br>哪怕只是「今天她笑了一下」。
+      </div>`;
+      return;
+    }
+
+    const groups = [];
+    let cur = null;
+    list.forEach((x) => {
+      const d = parseDT(x.at);
+      const k = ymd(d);
+      if (!cur || cur.k !== k) { cur = { k, d, items: [] }; groups.push(cur); }
+      cur.items.push(x);
+    });
+
+    box.innerHTML = groups.map((g) => {
+      const dn = dayIndex(g.d);
+      const label = dn > 0 ? `${fmtDate(g.d)} · 在一起第 ${dn} 天` : fmtDate(g.d);
+      const cards = g.items.map((x) => {
+        const moodObj = D.MOODS[x.mood] || null;
+        const d = parseDT(x.at);
+        const title = x.kind === 'memory' ? (x.title || '无题') : '心动瞬间';
+        return `<div class="tl-card ${x.kind === 'heart' ? 'is-heart' : ''}">
+          <div class="tl-top">
+            <span class="tl-emoji">${moodObj ? moodObj.e : (x.kind === 'memory' ? '📖' : '💗')}</span>
+            <span class="tl-title">${esc(title)}</span>
+            ${moodObj ? `<span class="tl-mood">${esc(moodObj.k)}</span>` : ''}
+            <button class="tl-del" data-del-mem="${x.id}" title="删除">删除</button>
+          </div>
+          ${x.text ? `<div class="tl-text">${esc(x.text)}</div>` : ''}
+          ${x.img ? `<img class="tl-img" src="${x.img}" alt="" loading="lazy" data-cap="${pad(d.getHours())}:${pad(d.getMinutes())} · ${esc(fmtMD(d))}">` : ''}
+          <div class="tl-foot">
+            <span class="tl-day-num">${pad(d.getHours())}:${pad(d.getMinutes())}</span>
+            <span>${x.kind === 'heart' ? '存入恋爱银行' : '收入拾光集'}</span>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="tl-day"><div class="tl-day-label">${label}</div>${cards}</div>`;
+    }).join('');
+  }
+
+  function openMomentModal(kind) {
+    const isHeart = kind === 'heart';
+    openModal(`
+      <h3>${isHeart ? '记一笔心动' : '写一篇回忆'}</h3>
+      <p class="modal-sub">${isHeart ? '一句话就好，越具体越珍贵。' : '把这件事写下来，以后会反复看。'}</p>
+      ${isHeart ? '' : `<div class="field">
+        <label>标题</label>
+        <input type="text" id="mem-title" maxlength="24" placeholder="比如：第一次一起做饭">
+      </div>`}
+      <div class="field">
+        <label>${isHeart ? '此刻' : '内容'}</label>
+        <textarea id="mem-text" rows="${isHeart ? 3 : 5}" placeholder="${isHeart ? '今天她帮我带了一杯热奶茶，杯壁是温的。' : '发生了什么？当时你在想什么？'}"></textarea>
+      </div>
+      <div class="field">
+        <label>心情</label>
+        ${moodPicker(0)}
+      </div>
+      <div class="field">
+        <label>时间</label>
+        <input type="datetime-local" id="mem-at" value="${nowLocalInput()}">
+      </div>
+      <div class="field">
+        <label>照片（可选）</label>
+        <label class="img-drop" for="mem-img">
+          <img class="img-prev" id="mem-prev" alt="">
+          <span id="mem-img-tip">点这里选一张照片 · 会自动压缩</span>
+        </label>
+        <input type="file" id="mem-img" accept="image/*" hidden>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="mem-save" type="button">存进去</button>
+      </div>
+    `, (root) => {
+      const getMood = bindMoodPicker(root, 0);
+      let imgData = '';
+
+      $('#mem-img', root).addEventListener('change', (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        compressImage(f, (data) => {
+          imgData = data;
+          const p = $('#mem-prev', root);
+          p.src = data; p.style.display = 'block';
+          $('#mem-img-tip', root).textContent = '已添加 · 点这里可以换一张';
+        });
+      });
+
+      $('#mem-save', root).onclick = () => {
+        const text = $('#mem-text', root).value.trim();
+        const title = isHeart ? '' : ($('#mem-title', root).value.trim() || '无题');
+        const at = $('#mem-at', root).value;
+        if (!text) { toast('写点什么吧'); return; }
+        if (!at) { toast('选一个时间'); return; }
+        state.moments.push({
+          id: uid(), kind, at, text, title,
+          mood: getMood(), img: imgData
+        });
+        save();
+        closeModal();
+        renderAll();
+        if (isHeart) {
+          toast('已存入恋爱银行 ✨');
+          burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 14);
+        } else {
+          toast('这一篇，收进拾光集了');
+        }
+      };
+    });
+  }
+
+  function nowLocalInput() {
+    const d = new Date();
+    return `${ymd(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function compressImage(file, cb) {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1000;
+        const sc = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * sc));
+        c.height = Math.max(1, Math.round(img.height * sc));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        cb(c.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = () => toast('这张图读不出来');
+      img.src = fr.result;
+    };
+    fr.onerror = () => toast('读取失败');
+    fr.readAsDataURL(file);
+  }
+
+  /* ==================== 时间胶囊 ==================== */
+  let capsulePinged = false;
+
+  function renderCapsules() {
+    const box = $('#capsule-list');
+    if (!state.capsules.length) {
+      box.innerHTML = `<div class="cap-empty">还没有写过信。第一次写，可以从「一年后」开始。</div>`;
+    } else {
+      const list = state.capsules.slice().sort((a, b) => a.unlock.localeCompare(b.unlock));
+      box.innerHTML = list.map((c) => {
+        const now = Date.now();
+        const t = parseDT(c.unlock).getTime();
+        const left = Math.ceil((t - now) / DAY);
+        const ready = now >= t;
+        const sealed = !c.opened;
+        let bodyHtml = '';
+        let foot = '';
+
+        if (!sealed) {
+          bodyHtml = `<div class="cap-body">${esc(c.body)}</div>`;
+        } else if (ready) {
+          foot = `<button class="btn btn-primary cap-open-btn" data-open="${c.id}" type="button">拆开这封信</button>`;
+        } else {
+          bodyHtml = `<div class="cap-locked-note"><span>🔒</span><span>封存中，到期才能打开</span><i>${'·'.repeat(24)}</i></div>`;
+        }
+
+        return `<div class="capsule ${sealed ? 'sealed' : ''}">
+          <div class="cap-top">
+            <div class="cap-seal ${sealed ? '' : 'is-open'}" aria-hidden="true"></div>
+            <div class="cap-title">
+              <h4>${esc(c.title || '给未来的我们')}</h4>
+              <div class="cap-sub">写于 ${fmtDate(parseDT(c.created))}${sealed ? '' : ' · 已拆封'}</div>
+            </div>
+            <div class="cap-time">
+              ${ready ? `<b>到期</b><small>${fmtMD(parseDT(c.unlock))}</small>`
+            : `<b>${left}</b><small>天后解锁</small>`}
+            </div>
+          </div>
+          ${bodyHtml}${foot}
+          <div class="tl-foot" style="margin-top:12px">
+            <span>${ready ? '' : `解锁日：${fmtDate(parseDT(c.unlock))}`}</span>
+            <button class="tl-del" data-del-cap="${c.id}" type="button">删除</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    // 有信到期了，只在本次打开时提醒一次
+    if (!capsulePinged) {
+      const readyN = state.capsules.filter((c) => !c.opened && Date.now() >= parseDT(c.unlock).getTime()).length;
+      if (readyN) {
+        capsulePinged = true;
+        setTimeout(() => toast(readyN === 1 ? '有一封信到期了 💌' : `有 ${readyN} 封信到期了 💌`), 1300);
+      }
+    }
+
+    // 每日一问
+    const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;    $('#q-day').textContent = `第 ${qIndex + 1} 问`;
+    $('#q-ask').textContent = D.QUESTIONS[qIndex];
+    const tKey = ymd(new Date());
+    const exist = state.qa.find((x) => x.date === tKey);
+    $('#q-answer').value = exist ? exist.a : '';
+    $('#q-state').textContent = exist ? '今天已经答过了，可以再改。' : '答完会存进这里，只有你们能看到。';
+
+    const hist = state.qa.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+    $('#q-history').innerHTML = hist.length ? hist.map((x) => `
+      <div class="qa">
+        <div class="qa-q">${esc(x.q)}</div>
+        <div class="qa-a">${esc(x.a)}</div>
+        <div class="qa-t">${esc(x.date)}</div>
+      </div>`).join('') : '';
+  }
+
+  function openCapsuleModal() {
+    openModal(`
+      <h3>写一封寄往未来的信</h3>
+      <p class="modal-sub">封上之后，在解锁日之前，你自己也读不到它。</p>
+      <div class="field">
+        <label>标题</label>
+        <input type="text" id="cap-title" maxlength="24" placeholder="给一年后的我们">
+      </div>
+      <div class="field">
+        <label>信的内容</label>
+        <textarea id="cap-body" rows="6" placeholder="现在的我们在做什么？希望那时的我们是什么样子？"></textarea>
+      </div>
+      <div class="field">
+        <label>什么时候解锁</label>
+        <div class="seg" id="cap-preset">
+          ${D.CAPSULE_PRESETS.map((p, i) => `<button type="button" data-d="${p.d}" class="${i === 0 ? 'is-on' : ''}">${esc(p.k)}</button>`).join('')}
+        </div>
+        <div style="margin-top:10px">
+          <input type="date" id="cap-date" value="${ymd(new Date(Date.now() + 365 * DAY))}">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="cap-save" type="button">封上这封信 🔴</button>
+      </div>
+    `, (root) => {
+      $('#cap-preset', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-d]'); if (!b) return;
+        $$('[data-d]', root).forEach((x) => x.classList.toggle('is-on', x === b));
+        const d = Number(b.dataset.d);
+        if (d > 0) $('#cap-date', root).value = ymd(new Date(Date.now() + d * DAY));
+      });
+      $('#cap-save', root).onclick = () => {
+        const title = $('#cap-title', root).value.trim() || '给未来的我们';
+        const body = $('#cap-body', root).value.trim();
+        const unlock = $('#cap-date', root).value;
+        if (!body) { toast('还什么都没写呢'); return; }
+        if (!unlock) { toast('选一个解锁日'); return; }
+        if (parseDT(unlock + 'T00:00:00').getTime() < today0().getTime()) {
+          toast('解锁日要选在未来呀'); return;
+        }
+        state.capsules.push({ id: uid(), title, body, created: new Date().toISOString(), unlock, opened: false });
+        save(); closeModal(); renderCapsules(); renderHome();
+        toast('封好了，到期再见 💌');
+      };
+    });
+  }
+
+  /* ==================== 一百件小事 ==================== */
+  let bucketCat = '全部';
+
+  function bucketCats() {
+    const set = [];
+    D.BUCKET.forEach((x) => { if (set.indexOf(x[1]) < 0) set.push(x[1]); });
+    return set;
+  }
+
+  function renderBucket() {
+    const doneCount = Object.keys(state.bucket).length;
+    $('#b-done').textContent = doneCount;
+    $('#b-bar').style.width = (doneCount / D.BUCKET.length) * 100 + '%';
+    const tips = [
+      '先划掉第一件吧。',
+      '已经完成 ' + doneCount + ' 件，还剩 ' + (D.BUCKET.length - doneCount) + ' 件。',
+      '慢一点也没关系，反正有一辈子。'
+    ];
+    $('#b-tip').textContent = doneCount === 0 ? tips[0] : (doneCount >= 100 ? '全部完成，你们太厉害了 🏆' : tips[1]);
+
+    const cats = ['全部', ...bucketCats()];
+    $('#b-chips').innerHTML = cats.map((c) =>
+      `<button class="chip ${c === bucketCat ? 'is-on' : ''}" data-cat="${c}" type="button">${esc(c)}</button>`).join('');
+
+    const list = D.BUCKET.map((x, i) => ({ i, t: x[0], c: x[1] }))
+      .filter((x) => bucketCat === '全部' || x.c === bucketCat);
+
+    $('#bucket-list').innerHTML = list.map((x) => {
+      const done = !!state.bucket[x.i];
+      return `<button class="bk ${done ? 'is-done' : ''}" type="button" data-bk="${x.i}">
+        <span class="bk-no">${pad(x.i + 1, 2)}</span>
+        <span class="bk-t">${esc(x.t)}</span>
+        <span class="bk-cat">${esc(x.c)}</span>
+        <span class="bk-box"><svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span>
+      </button>`;
+    }).join('');
+  }
+
+  function toggleBucket(i, el) {
+    if (state.bucket[i]) {
+      delete state.bucket[i];
+    } else {
+      state.bucket[i] = Date.now();
+      if (el) burstAt(el);
+      const doneCount = Object.keys(state.bucket).length;
+      const t = D.BUCKET_DONE_TIPS[Math.floor(Math.random() * D.BUCKET_DONE_TIPS.length)]
+        .replace('{n}', doneCount).replace('{left}', D.BUCKET.length - doneCount);
+      toast(t);
+    }
+    save(); renderBucket(); renderHome();
+  }
+
+  function randomPick() {
+    const all = D.BUCKET.map((x, i) => i).filter((i) => !state.bucket[i]);
+    if (!all.length) { toast('一百件都完成啦 🏆'); return; }
+    const i = all[Math.floor(Math.random() * all.length)];
+    openModal(`
+      <h3>今天就做这一件</h3>
+      <p class="modal-sub">命运抽中了第 ${i + 1} 件：</p>
+      <div class="card" style="padding:22px;text-align:center;font-size:16px;line-height:1.8">
+        ${esc(D.BUCKET[i][0])}
+        <div style="font-size:11.5px;color:var(--faint);margin-top:10px;letter-spacing:.16em">${esc(D.BUCKET[i][1])}</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="rp-again" type="button">换一个</button>
+        <button class="btn btn-primary" id="rp-ok" type="button">就这件，去做</button>
+      </div>
+    `, (root) => {
+      $('#rp-again', root).onclick = () => { closeModal(); setTimeout(randomPick, 120); };
+      $('#rp-ok', root).onclick = () => {
+        state.bucket[i] = Date.now();
+        save(); closeModal(); renderBucket(); renderHome();
+        toast('划掉一件 ✅ 记得回来记一笔');
+      };
+    });
+  }
+
+  /* ==================== 打卡 ==================== */
+  function openCheckin() {
+    const tKey = ymd(new Date());
+    if (state.checkins[tKey] != null) {
+      toast(`今天已经打过卡啦，连续 ${streak()} 天 🔥`);
+      return;
+    }
+    openModal(`
+      <h3>今天的心情是</h3>
+      <p class="modal-sub">打个卡，就算今天也认真喜欢过了。</p>
+      <div class="field">${moodPicker(0)}</div>
+      <div class="field">
+        <label>想说一句（可选）</label>
+        <input type="text" id="ck-note" maxlength="30" placeholder="今天也很好">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="ck-save" type="button">存入今天</button>
+      </div>
+    `, (root) => {
+      const getMood = bindMoodPicker(root, 0);
+      $('#ck-save', root).onclick = () => {
+        const mi = getMood();
+        const note = $('#ck-note', root).value.trim();
+        state.checkins[tKey] = { m: mi, n: note };
+        save(); closeModal(); renderAll();
+        toast(`连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次心动`);
+        burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
+      };
+    });
+  }
+
+  /* ==================== 设置 / 数据 ==================== */
+  /* 把对方传来的同步包并进来：只增不删，绝不覆盖本机已有记录 */
+  function mergeState(incoming) {
+    const stat = { added: 0, updated: 0, config: false };
+    const has = (arr, id) => arr.some((x) => x && x.id === id);
+
+    (incoming.moments || []).forEach((m) => {
+      if (!m || !m.id) return;
+      if (!has(state.moments, m.id)) { state.moments.push(m); stat.added++; }
+    });
+
+    (incoming.capsules || []).forEach((c) => {
+      if (!c || !c.id) return;
+      const mine = state.capsules.find((x) => x && x.id === c.id);
+      if (!mine) { state.capsules.push(c); stat.added++; }
+      else if (c.opened && !mine.opened) { mine.opened = true; stat.updated++; }
+    });
+
+    (incoming.anns || []).forEach((a) => {
+      if (!a || !a.id) return;
+      if (!has(state.anns, a.id)) { state.anns.push(a); stat.added++; }
+    });
+
+    Object.keys(incoming.bucket || {}).forEach((k) => {
+      if (state.bucket[k] == null) { state.bucket[k] = incoming.bucket[k]; stat.added++; }
+    });
+
+    Object.keys(incoming.checkins || {}).forEach((k) => {
+      if (state.checkins[k] == null) { state.checkins[k] = incoming.checkins[k]; stat.added++; }
+    });
+
+    // 每日一问按日期去重，本机答过的以本机为准
+    const dates = new Set(state.qa.map((x) => x && x.date));
+    (incoming.qa || []).forEach((x) => {
+      if (!x || !x.date || dates.has(x.date)) return;
+      state.qa.push(x); dates.add(x.date); stat.added++;
+    });
+
+    // 本机还是默认值时才采用对方的称呼和起点，避免互相改花
+    const cfg = incoming.config || {};
+    if (cfg.start && state.config.start === DEFAULT_START && cfg.start !== DEFAULT_START) {
+      state.config.start = cfg.start; stat.config = true;
+    }
+    if (cfg.me && state.config.me === '我' && cfg.me !== '我') { state.config.me = cfg.me; stat.config = true; }
+    if (cfg.you && state.config.you === '你' && cfg.you !== '你') { state.config.you = cfg.you; stat.config = true; }
+
+    state.seen.banner = true;
+    return stat;
+  }
+
+  /* ==================== 云端同步（GitHub Gist / Gitee） ==================== */
+  const SYNC_FILE = 'shijiu-sync.json';
+
+  const SYNC_PROVIDERS = {
+    github: {
+      name: 'GitHub 私有 Gist',
+      async create(token, payload) {
+        return fetch('https://api.github.com/gists', {
+          method: 'POST',
+          headers: { Authorization: 'token ' + token, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+          body: JSON.stringify({ description: '拾玖·时光 · 同步空间', public: false, files: { [SYNC_FILE]: { content: payload } } })
+        });
+      },
+      async read(token, id) {
+        return fetch('https://api.github.com/gists/' + encodeURIComponent(id), {
+          headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github+json' }
+        });
+      },
+      async write(token, id, payload) {
+        return fetch('https://api.github.com/gists/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { Authorization: 'token ' + token, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+          body: JSON.stringify({ files: { [SYNC_FILE]: { content: payload } } })
+        });
+      },
+      pick(js) {
+        const f = js && js.files && js.files[SYNC_FILE];
+        if (!f || f.truncated) return '';
+        return f.content || '';
+      }
+    },
+    gitee: {
+      name: 'Gitee 码云',
+      async create(token, payload) {
+        return fetch('https://gitee.com/api/v5/gists', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            access_token: token, description: '拾玖·时光 · 同步空间', public: false,
+            files: { [SYNC_FILE]: { content: payload } }
+          })
+        });
+      },
+      async read(token, id) {
+        return fetch('https://gitee.com/api/v5/gists/' + encodeURIComponent(id) + '?access_token=' + encodeURIComponent(token));
+      },
+      async write(token, id, payload) {
+        return fetch('https://gitee.com/api/v5/gists/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: token, files: { [SYNC_FILE]: { content: payload } } })
+        });
+      },
+      pick(js) {
+        const f = js && js.files && js.files[SYNC_FILE];
+        return f ? (f.content || '') : '';
+      }
+    }
+  };
+
+  function syncCfg() {
+    if (!state.config.sync || typeof state.config.sync !== 'object') {
+      state.config.sync = { provider: 'github', token: '', gist: '', lastAt: 0 };
+    }
+    return state.config.sync;
+  }
+
+  function syncStateText() {
+    const c = syncCfg();
+    if (!c.gist) return '未开启 · 也可以只靠同步包互传';
+    const name = (SYNC_PROVIDERS[c.provider] || {}).name || c.provider;
+    if (!c.lastAt) return `已连接 ${name} · 还没同步过`;
+    const d = new Date(c.lastAt);
+    return `已连接 ${name} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  /* 太大就把照片剔掉，先保住文字 */
+  function syncPayload() {
+    let text = JSON.stringify(state);
+    let stripped = false;
+    if (text.length > 900000) {
+      const clone = JSON.parse(text);
+      clone.moments = (clone.moments || []).map((m) => ({ ...m, img: '' }));
+      text = JSON.stringify(clone);
+      stripped = true;
+    }
+    return { text, stripped };
+  }
+
+  function httpHint(code) {
+    return ({
+      401: '令牌无效或已过期',
+      403: '权限不够，或请求太频繁',
+      404: '同步码不对，或令牌看不到这个空间',
+      422: '内容太大，或格式不被接受',
+      429: '请求太频繁，等一分钟再试'
+    })[code] || '服务端返回了错误';
+  }
+
+  async function createSpace(log) {
+    const c = syncCfg();
+    const p = SYNC_PROVIDERS[c.provider];
+    if (!c.token) { log('先填访问令牌'); return; }
+    log('正在创建私有同步空间…');
+    try {
+      const r = await p.create(c.token, syncPayload().text);
+      if (!r.ok) { log(`创建失败：HTTP ${r.status} · ${httpHint(r.status)}`); return; }
+      const js = await r.json();
+      const id = js.id || js.gist_id || '';
+      if (!id) { log('创建成功但没拿到同步码，请把返回内容告诉我'); return; }
+      c.gist = id;
+      c.lastAt = Date.now();
+      save();
+      log('创建成功 ✓');
+      log('同步码：' + id);
+      log('点「复制邀请串」发给她，她那边点「用邀请串加入」即可。');
+    } catch (e) {
+      log('网络错误：' + e.message + '（可能是被拦截或没网）');
+    }
+  }
+
+  async function syncNow(log) {
+    const c = syncCfg();
+    const p = SYNC_PROVIDERS[c.provider];
+    if (!c.token || !c.gist) { log('还没有令牌或同步码，先创建或加入'); return; }
+
+    log('正在拉取…');
+    let stat = { added: 0, updated: 0, config: false };
+    try {
+      const r = await p.read(c.token, c.gist);
+      if (!r.ok) { log(`拉取失败：HTTP ${r.status} · ${httpHint(r.status)}`); return; }
+      const js = await r.json();
+      const content = p.pick(js);
+      if (content) {
+        try {
+          stat = mergeState(JSON.parse(content));
+          save(); renderAll();
+        } catch (e) { log('对方的数据解不开，这次只推送不合并'); }
+      } else {
+        log('对方还没推送过内容');
+      }
+      log(`合并完成：新增 ${stat.added} 条，更新 ${stat.updated} 条`);
+    } catch (e) {
+      log('网络错误：' + e.message + '（可能是被拦截或没网）');
+      return;
+    }
+
+    log('正在推送…');
+    const payload = syncPayload();
+    try {
+      const w = await p.write(c.token, c.gist, payload.text);
+      if (!w.ok) { log(`推送失败：HTTP ${w.status} · ${httpHint(w.status)}`); return; }
+      c.lastAt = Date.now();
+      save();
+      log('同步完成 ✓' + (payload.stripped ? '（照片太大，这次只同步了文字）' : ''));
+      if (stat.added) burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 12);
+    } catch (e) {
+      log('网络错误：' + e.message);
+    }
+  }
+
+  /* 邀请串 = 服务商 + 令牌 + 同步码，一串带走 */
+  function inviteString() {
+    const c = syncCfg();
+    if (!c.gist) return '';
+    const data = JSON.stringify({ p: c.provider, t: c.token, g: c.gist });
+    return 'SJ1.' + btoa(unescape(encodeURIComponent(data)));
+  }
+
+  function parseInvite(s) {
+    s = String(s || '').trim();
+    if (s.indexOf('SJ1.') !== 0) return null;
+    try { return JSON.parse(decodeURIComponent(escape(atob(s.slice(4))))); } catch (e) { return null; }
+  }
+
+  function openSyncModal() {
+    const c = syncCfg();
+    openModal(`
+      <h3>云端同步</h3>
+      <p class="modal-sub">把记录放在一个只有你们知道的地方。全程只调用 API，不会打开任何网页。</p>
+
+      <div class="field">
+        <label>服务商</label>
+        <div class="seg" id="sp-provider">
+          <button type="button" data-p="github" class="${c.provider === 'github' ? 'is-on' : ''}">GitHub 私有 Gist</button>
+          <button type="button" data-p="gitee" class="${c.provider === 'gitee' ? 'is-on' : ''}">Gitee 码云</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>访问令牌（只保存在这台设备）</label>
+        <input type="password" id="sp-token" value="${esc(c.token)}" placeholder="粘贴令牌" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label>同步码</label>
+        <input type="text" id="sp-gist" value="${esc(c.gist)}" placeholder="第一次用点下面「创建」">
+      </div>
+
+      <div class="sp-actions">
+        <button class="btn btn-sm" id="sp-create" type="button">创建同步空间</button>
+        <button class="btn btn-sm" id="sp-join" type="button">用邀请串加入</button>
+        <button class="btn btn-sm" id="sp-invite" type="button">复制邀请串</button>
+        <button class="btn btn-sm btn-primary" id="sp-sync" type="button">立即同步</button>
+      </div>
+
+      <div class="sp-log" id="sp-log">${c.lastAt ? '上次同步：' + fmtDT(new Date(c.lastAt)) : '还没有同步过'}</div>
+
+      <div class="sp-help">
+        <b>怎么拿令牌</b><br>
+        GitHub：Settings → Developer settings → Personal access tokens → 勾选 <b>gist</b><br>
+        Gitee：设置 → 私人令牌 → 勾选 <b>gists</b><br>
+        邀请串里包含令牌，只发给她一个人。令牌随时可以在网站上撤销重置。
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">关闭</button>
+        <button class="btn btn-primary" id="sp-save" type="button">保存</button>
+      </div>
+    `, (root) => {
+      const box = $('#sp-log', root);
+      const log = (s) => { box.textContent += '\n' + s; box.scrollTop = box.scrollHeight; };
+      let provider = c.provider;
+
+      $('#sp-provider', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-p]'); if (!b) return;
+        provider = b.dataset.p;
+        $$('[data-p]', root).forEach((x) => x.classList.toggle('is-on', x === b));
+      });
+
+      const collect = () => {
+        const cc = syncCfg();
+        cc.provider = provider;
+        cc.token = $('#sp-token', root).value.trim();
+        cc.gist = $('#sp-gist', root).value.trim();
+        return cc;
+      };
+
+      $('#sp-create', root).onclick = async () => {
+        collect();
+        await createSpace(log);
+        $('#sp-gist', root).value = syncCfg().gist;
+      };
+      $('#sp-sync', root).onclick = async () => { collect(); await syncNow(log); };
+      $('#sp-invite', root).onclick = async () => {
+        collect();
+        const s = inviteString();
+        if (!s) { log('还没有同步码，先创建'); return; }
+        try {
+          await navigator.clipboard.writeText(s);
+          log('邀请串已复制，发给她即可（里面含令牌，别发群）');
+        } catch (e) {
+          log('复制失败，请手动复制下面这串：');
+          log(s);
+        }
+      };
+      $('#sp-join', root).onclick = () => {
+        const s = prompt('把对方发来的邀请串粘贴到这里：');
+        if (!s) return;
+        const o = parseInvite(s);
+        if (!o || !o.g || !o.t) { log('邀请串不对，检查一下有没有复制完整'); return; }
+        const cc = syncCfg();
+        cc.provider = o.p === 'gitee' ? 'gitee' : 'github';
+        cc.token = o.t;
+        cc.gist = o.g;
+        provider = cc.provider;
+        save();
+        $('#sp-token', root).value = cc.token;
+        $('#sp-gist', root).value = cc.gist;
+        $$('[data-p]', root).forEach((x) => x.classList.toggle('is-on', x.dataset.p === cc.provider));
+        log('已加入，点「立即同步」试试');
+      };
+      $('#sp-save', root).onclick = () => {
+        collect(); save(); closeModal();
+        toast('同步设置已保存');
+      };
+    });
+  }
+
+  /* 装到主屏幕的提示语 */
+  function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent); }
+  function isStandalone() {
+    if (navigator.standalone) return true; // iOS Safari
+    return !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  }
+  function installHint() {
+    if (location.protocol === 'file:') return '现在是本地文件模式，装不了；用网址打开才行';
+    if (isStandalone()) return '已经装好啦，就在主屏幕上';
+    return isIOS() ? 'Safari → 分享 → 添加到主屏幕' : '浏览器菜单（⋮）→ 添加到主屏幕';
+  }
+
+  function openSettings() {
+    openModal(`
+      <h3>设置</h3>
+      <p class="modal-sub">这些都是只存在你自己设备上的数据，不会上传到任何地方。</p>
+
+      <div class="field-row">
+        <div class="field"><label>我的称呼</label><input type="text" id="set-me" maxlength="8" value="${esc(state.config.me)}"></div>
+        <div class="field"><label>她的称呼</label><input type="text" id="set-you" maxlength="8" value="${esc(state.config.you)}"></div>
+      </div>
+
+      <div class="field">
+        <label>我们确认关系的时间</label>
+        <input type="datetime-local" id="set-start" value="${esc(state.config.start)}">
+      </div>
+
+      <div class="field">
+        <label>主题</label>
+        <div class="seg" id="set-theme">
+          ${['auto', 'paper', 'night', 'rose'].map((t) => `<button type="button" data-t="${t}" class="${normalizeTheme(state.config.theme) === t ? 'is-on' : ''}">${THEME_LABEL[t]}</button>`).join('')}
+        </div>
+        <p class="modal-sub" style="margin:9px 0 0;font-size:11px">「随时刻」会在 19 点后自动翻到墨夜，白天回到宣纸。</p>
+      </div>
+
+      <div class="field-row">
+        <div class="field"><label>我们的暗号</label><input type="text" id="set-secret" maxlength="16" value="${esc(state.config.secret)}" placeholder="随便打几个字"></div>
+        <div class="field"><label>暗号彩蛋</label><input type="text" id="set-secretmsg" maxlength="30" value="${esc(state.config.secretMsg)}"></div>
+      </div>
+      <p class="modal-sub" style="margin-top:-6px">在任何页面连续敲出暗号，会掉出一句悄悄话。</p>
+
+      <div class="set-row">
+        <div class="set-label"><b>装到手机上</b><span>${installHint()}</span></div>
+        <button class="btn btn-sm" id="set-install" type="button">怎么做</button>
+      </div>
+
+      <div class="set-row">
+        <div class="set-label"><b>云端同步</b><span>${syncStateText()}</span></div>
+        <button class="btn btn-sm" id="set-sync" type="button">配置</button>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><b>导出同步包</b><span>一个 JSON 文件，发给她，或带到新手机</span></div>
+        <button class="btn btn-sm" id="set-export" type="button">导出</button>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><b>合并同步包</b><span>按记录合并，只增不删，不会覆盖你已有的内容</span></div>
+        <button class="btn btn-sm" id="set-import" type="button">合并</button>
+        <input type="file" id="set-file" accept="application/json,.json" hidden>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><b>清空全部</b><span>删掉所有记录，无法恢复</span></div>
+        <button class="btn btn-sm btn-danger" id="set-clear" type="button">清空</button>
+      </div>
+
+      <div class="set-about">
+        <b>拾玖 · 时光</b> v2.0 · 纸册版<br>
+        一个装在单个文件夹里的恋爱纪念册。<br>
+        所有数据保存在这台设备的浏览器里；想两台设备同步，用「导出 / 合并」。<br>
+        主题跟着时刻走：白昼宣纸，入夜墨灯。
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="set-save" type="button">保存</button>
+      </div>
+    `, (root) => {
+      let theme = normalizeTheme(state.config.theme);
+      const previewTheme = (t) => {
+        if (t !== 'auto') return t;
+        const hh = new Date().getHours();
+        return (hh >= 19 || hh < 5) ? 'night' : 'paper';
+      };
+      $('#set-theme', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-t]'); if (!b) return;
+        theme = b.dataset.t;
+        $$('[data-t]', root).forEach((x) => x.classList.toggle('is-on', x === b));
+        document.documentElement.dataset.theme = previewTheme(theme);
+      });
+
+      $('#set-sync', root).onclick = () => { closeModal(); setTimeout(openSyncModal, 120); };
+
+      $('#set-install', root).onclick = () => {
+        if (location.protocol === 'file:') {
+          toast('这是本地文件模式，装不了；先在手机上用网址打开', 4200);
+        } else if (isStandalone()) {
+          toast('已经装好了，就是主屏幕上那个红印章', 3600);
+        } else if (isIOS()) {
+          toast('点 Safari 底部的「分享」，选「添加到主屏幕」', 4600);
+        } else {
+          toast('点浏览器右上角菜单，选「添加到主屏幕 / 安装应用」', 4600);
+        }
+      };
+
+      $('#set-export', root).onclick = () => {
+        const data = JSON.stringify(state, null, 2);
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `拾玖时光-同步包-${ymd(new Date())}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+        toast('同步包已导出，发给她就行');
+      };
+
+      $('#set-import', root).onclick = () => $('#set-file', root).click();
+      $('#set-file', root).onchange = (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (!f) return;
+        const fr = new FileReader();
+        fr.onload = () => {
+          let o;
+          try {
+            o = JSON.parse(fr.result);
+            if (!o || typeof o !== 'object' || !o.config) throw new Error('bad');
+          } catch (err) { toast('这个文件好像不是同步包'); return; }
+          const stat = mergeState(o);
+          save(); closeModal(); renderAll(); setPageHero();
+          const bits = [];
+          if (stat.added) bits.push(`新增 ${stat.added} 条`);
+          if (stat.updated) bits.push(`更新 ${stat.updated} 条`);
+          if (stat.config) bits.push('称呼已同步');
+          toast(bits.length ? '已合并：' + bits.join('、') : '没有新内容，两边已经一致啦');
+          if (stat.added) burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 12);
+        };
+        fr.readAsText(f);
+      };
+
+      $('#set-clear', root).onclick = () => {
+        if (!confirm('真的要清空所有记录吗？这一步不可撤回。')) return;
+        state = blankState();
+        save(); closeModal(); renderAll(); setPageHero();
+        toast('已经清空，从今天重新开始');
+      };
+
+      $('#set-save', root).onclick = () => {
+        state.config.me = $('#set-me', root).value.trim() || '我';
+        state.config.you = $('#set-you', root).value.trim() || '你';
+        state.config.secret = $('#set-secret', root).value.trim();
+        state.config.secretMsg = $('#set-secretmsg', root).value.trim();
+        state.config.theme = theme;
+        const st = $('#set-start', root).value;
+        if (st) state.config.start = st;
+        save(); closeModal(); applyTheme(); renderAll();
+        toast(`改好了 · ${THEME_LABEL[theme] || '随时刻'}`);
+      };
+
+      // 取消 / 关闭时把预览中的主题还原
+      return () => { applyTheme(); };
+    });
+  }
+
+  /* ==================== 纪念卡海报 ==================== */
+  /* 纪念卡：一张纸、一枚印、一个数字 */
+  function drawPoster() {
+    const W = 750, H = 1334;
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    const days = Math.max(1, todayIndex());
+    const sd = startDate();
+    const th = resolveTheme();
+
+    const pal = th === 'night'
+      ? { bg: '#171420', glow: '#241c30', ink: '#f2e9db', dim: 'rgba(242,233,219,.66)', faint: 'rgba(242,233,219,.36)', seal: '#e2604a', sealInk: '#fdf6ed', gold: '#d8b57c' }
+      : th === 'rose'
+        ? { bg: '#fdf5f3', glow: '#f6e6e4', ink: '#2c1a1d', dim: 'rgba(44,26,29,.66)', faint: 'rgba(44,26,29,.4)', seal: '#a63a54', sealInk: '#fdf5f3', gold: '#8a5f47' }
+        : { bg: '#fbf6ec', glow: '#f1e6d2', ink: '#241d18', dim: 'rgba(36,29,24,.66)', faint: 'rgba(36,29,24,.4)', seal: '#b7402b', sealInk: '#fdf6ec', gold: '#8d6b38' };
+
+    const FS = '"Songti SC","STSong","SimSun","宋体",serif';
+    const FK = '"Kaiti SC","STKaiti","KaiTi","楷体",serif';
+
+    // 纸底
+    ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, W, H);
+    const g = ctx.createRadialGradient(W * 0.5, H * 0.1, 40, W * 0.5, H * 0.1, W * 1.05);
+    g.addColorStop(0, hexA(pal.glow, 0.95));
+    g.addColorStop(1, hexA(pal.glow, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // 纤维
+    let seed = 20261019;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    ctx.save();
+    ctx.fillStyle = pal.ink;
+    for (let i = 0; i < 1100; i++) {
+      ctx.globalAlpha = rnd() * 0.05 + 0.01;
+      ctx.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 2, 1);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    if (th === 'night') {
+      for (let i = 0; i < 80; i++) {
+        ctx.globalAlpha = rnd() * 0.55 + 0.12;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(rnd() * W, rnd() * H, rnd() * 1.4 + 0.3, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 双线框
+    ctx.strokeStyle = hexA(pal.ink, 0.22); ctx.lineWidth = 1.5;
+    ctx.strokeRect(34, 34, W - 68, H - 68);
+    ctx.strokeStyle = hexA(pal.ink, 0.10); ctx.lineWidth = 1;
+    ctx.strokeRect(46, 46, W - 92, H - 92);
+
+    ctx.textAlign = 'center';
+
+    // 品牌
+    ctx.fillStyle = pal.faint;
+    ctx.font = `400 20px ${FS}`;
+    ctx.letterSpacing = '10px';
+    ctx.fillText('拾 玖 · 时 光', W / 2, 128);
+    ctx.letterSpacing = '0px';
+    ctx.strokeStyle = hexA(pal.seal, 0.55); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(W / 2 - 26, 156); ctx.lineTo(W / 2 + 26, 156); ctx.stroke();
+
+    // 第 N 天
+    ctx.fillStyle = pal.dim;
+    ctx.font = `400 30px ${FS}`;
+    ctx.letterSpacing = '6px';
+    ctx.fillText('我们在一起的第', W / 2, 306);
+    ctx.letterSpacing = '0px';
+
+    const num = String(days);
+    ctx.fillStyle = pal.ink;
+    ctx.font = `400 ${num.length > 3 ? 200 : 264}px ${FS}`;
+    ctx.fillText(num, W / 2, 578);
+    ctx.font = `400 34px ${FS}`;
+    ctx.fillStyle = pal.dim;
+    ctx.fillText('天', W / 2, 650);
+
+    // 起点
+    ctx.fillStyle = pal.faint;
+    ctx.font = `400 24px ${FS}`;
+    ctx.fillText(`始于 ${cnDate(sd)} ${cnClock(sd)}`, W / 2, 726);
+
+    // 名字
+    const me = state.config.me, you = state.config.you;
+    ctx.font = `400 44px ${FS}`;
+    const wMe = ctx.measureText(me).width, wYou = ctx.measureText(you).width;
+    const gap = 52, total = wMe + gap * 2 + wYou;
+    let x = W / 2 - total / 2;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = pal.ink;
+    ctx.fillText(me, x, 830);
+    ctx.fillStyle = pal.seal;
+    ctx.font = `400 26px ${FS}`;
+    ctx.fillText('♥', x + wMe + gap - 10, 824);
+    ctx.font = `400 44px ${FS}`;
+    ctx.fillStyle = pal.ink;
+    ctx.fillText(you, x + wMe + gap * 2, 830);
+    ctx.textAlign = 'center';
+
+    // 分隔
+    ctx.strokeStyle = hexA(pal.ink, 0.14); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(W * 0.22, 892); ctx.lineTo(W * 0.78, 892); ctx.stroke();
+
+    // 下一站
+    const nx = nextMilestone();
+    const left = Math.max(0, daysUntil(nx.date));
+    ctx.fillStyle = pal.gold;
+    ctx.font = `400 26px ${FS}`;
+    ctx.letterSpacing = '4px';
+    ctx.fillText(`下一站 · ${nx.name}`, W / 2, 956);
+    ctx.letterSpacing = '0px';
+    ctx.fillStyle = pal.ink;
+    ctx.font = `400 54px ${FS}`;
+    ctx.fillText(left === 0 ? '就是今天' : `还有 ${left} 天`, W / 2, 1024);
+
+    // 今日情话
+    const q = String($('#h-quote').textContent || '').trim().replace(/^[“"]/, '').replace(/[”"]$/, '');
+    if (q) {
+      ctx.fillStyle = pal.dim;
+      ctx.font = `400 26px ${FK}`;
+      wrapText(ctx, `「${q}」`, W / 2, 1116, W - 250, 46);
+    }
+
+    // 一枚印
+    ctx.save();
+    ctx.translate(W - 100, 116);
+    ctx.rotate(6 * Math.PI / 180);
+    ctx.fillStyle = pal.seal;
+    roundRect(ctx, -31, -31, 62, 62, 6);
+    ctx.fill();
+    ctx.fillStyle = pal.sealInk;
+    ctx.font = `400 24px ${FS}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('拾', 0, -4);
+    ctx.fillText('玖', 0, 24);
+    ctx.restore();
+
+    // 页脚
+    ctx.fillStyle = pal.faint;
+    ctx.font = `400 18px ${FS}`;
+    ctx.letterSpacing = '6px';
+    ctx.fillText('1 0 · 1 9   2 3 : 4 5', W / 2, H - 66);
+
+    return cv;
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function wrapText(ctx, text, cx, y, maxW, lh) {
+    const chars = String(text).split('');
+    let line = '';
+    let yy = y;
+    for (let i = 0; i < chars.length; i++) {
+      const test = line + chars[i];
+      if (ctx.measureText(test).width > maxW && line) {
+        ctx.fillText(line, cx, yy);
+        line = chars[i];
+        yy += lh;
+      } else line = test;
+    }
+    if (line) ctx.fillText(line, cx, yy);
+  }
+
+  function hexA(hex, a) {
+    const h = hex.replace('#', '');
+    const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  }
+
+  function openPoster() {
+    const cv = drawPoster();
+    openModal(`
+      <h3>我们的纪念卡</h3>
+      <p class="modal-sub">保存下来，可以发给她，也可以存进相册。</p>
+      <div class="poster-wrap" id="poster-holder"></div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">关闭</button>
+        <button class="btn btn-primary" id="poster-save" type="button">保存图片</button>
+      </div>
+    `, (root) => {
+      const holder = $('#poster-holder', root);
+      cv.style.width = '100%';
+      holder.appendChild(cv);
+      $('#poster-save', root).onclick = () => {
+        cv.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `拾玖时光-第${Math.max(1, todayIndex())}天.png`;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          toast('已保存到下载文件夹');
+        }, 'image/png');
+      };
+    });
+  }
+
+  /* ==================== 路由 ==================== */
+  const PAGES = ['home', 'days', 'memories', 'capsule', 'bucket'];
+  let currentPage = 'home';
+
+  function go(page) {
+    if (!page) return;
+    currentPage = page;
+    $$('.page').forEach((p) => p.classList.toggle('is-active', p.dataset.page === page));
+    $$('.tab').forEach((t) => t.classList.toggle('is-on', t.dataset.page === page));
+    if (location.hash.slice(1) !== page) {
+      try { location.hash = page; } catch (e) { }
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    renderPage(page);
+  }
+
+  function route() {
+    const h = location.hash.slice(1);
+    if (h === 'poster') {
+      go('home');
+      setTimeout(openPoster, 260);
+      return;
+    }
+    if (h === 'sync') {
+      go('home');
+      setTimeout(openSyncModal, 260);
+      return;
+    }
+    go(PAGES.indexOf(h) >= 0 ? h : 'home');
+  }
+
+  function renderPage(page) {
+    if (page === 'home') renderHome();
+    else if (page === 'days') renderDays();
+    else if (page === 'memories') renderMemories();
+    else if (page === 'capsule') renderCapsules();
+    else if (page === 'bucket') renderBucket();
+  }
+
+  function renderAll() {
+    renderHome(); renderDays(); renderMemories(); renderCapsules(); renderBucket();
+  }
+
+  function setPageHero() { return applyTheme(); }
+
+  /* ==================== 事件绑定 ==================== */
+  function bind() {
+    // 导航
+    $('#tabbar').addEventListener('click', (e) => {
+      const b = e.target.closest('.tab'); if (!b) return;
+      go(b.dataset.page);
+    });
+    document.addEventListener('click', (e) => {
+      const g = e.target.closest('[data-goto]');
+      if (g) { go(g.dataset.goto); }
+    });
+
+    // 顶栏
+    $('#btn-settings').onclick = openSettings;
+    $('#btn-poster').onclick = openPoster;
+
+    // 首页
+    $('#h-add').onclick = () => openMomentModal('heart');
+    $('#h-checkin').onclick = openCheckin;
+    $('#h-quote-next').onclick = () => {
+      const cur = $('#h-quote').textContent;
+      let q = cur;
+      let guard = 0;
+      while (q === cur && guard++ < 12) q = D.QUOTES[Math.floor(Math.random() * D.QUOTES.length)];
+      $('#h-quote').dataset.pinned = '1';
+      setQuote(q, true);
+    };
+    $('#banner-fix').onclick = openSettings;
+    $('#banner-x').onclick = () => { state.seen.banner = true; save(); $('#banner-year').hidden = true; };
+
+    // 纪念日
+    $('#btn-add-ann').onclick = openAnnModal;
+    $('#ann-list').addEventListener('click', (e) => {
+      const del = e.target.closest('[data-del-ann]');
+      if (del) {
+        if (!confirm('删除这个纪念日？')) return;
+        state.anns = state.anns.filter((a) => a.id !== del.dataset.delAnn);
+        save(); renderDays(); toast('已删除');
+        return;
+      }
+      if (e.target.closest('#ann-add-tile')) openAnnModal();
+    });
+
+    // 拾光集
+    $('#btn-add-mem').onclick = () => openMomentModal('memory');
+    $('#mem-chips').addEventListener('click', (e) => {
+      const c = e.target.closest('.chip'); if (!c) return;
+      memFilter = c.dataset.filter;
+      $$('.chip', $('#mem-chips')).forEach((x) => x.classList.toggle('is-on', x === c));
+      renderMemories();
+    });
+    $('#timeline').addEventListener('click', (e) => {
+      const del = e.target.closest('[data-del-mem]');
+      const photo = e.target.closest('.tl-img');
+      if (photo && !del) {
+        openLightbox(photo.getAttribute('src'), photo.dataset.cap || '');
+        return;
+      }
+      if (!del) return;
+      if (!confirm('删掉这一条？')) return;
+      state.moments = state.moments.filter((m) => m.id !== del.dataset.delMem);
+      save(); renderAll(); toast('已删除');
+    });
+
+    // 胶囊
+    $('#btn-add-capsule').onclick = openCapsuleModal;
+    $('#capsule-list').addEventListener('click', (e) => {
+      const op = e.target.closest('[data-open]');
+      if (op) {
+        const c = state.capsules.find((x) => x.id === op.dataset.open);
+        if (!c) return;
+        c.opened = true;
+        save(); renderCapsules();
+        toast('拆开了 💌');
+        burstAt(op);
+        return;
+      }
+      const del = e.target.closest('[data-del-cap]');
+      if (del) {
+        if (!confirm('删除这封信？')) return;
+        state.capsules = state.capsules.filter((c) => c.id !== del.dataset.delCap);
+        save(); renderCapsules(); renderHome(); toast('已删除');
+      }
+    });
+
+    // 每日一问
+    $('#q-save').onclick = () => {
+      const a = $('#q-answer').value.trim();
+      if (!a) { toast('还没写呢'); return; }
+      const tKey = ymd(new Date());
+      const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;
+      const exist = state.qa.find((x) => x.date === tKey);
+      if (exist) { exist.a = a; exist.q = D.QUESTIONS[qIndex]; }
+      else state.qa.push({ id: uid(), date: tKey, q: D.QUESTIONS[qIndex], a });
+      save(); renderCapsules();
+      toast('收下了 · 今天的答案');
+      burstAt($('#q-save'));
+    };
+
+    // 小事
+    $('#btn-random').onclick = randomPick;
+    $('#b-chips').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-cat]'); if (!c) return;
+      bucketCat = c.dataset.cat;
+      renderBucket();
+    });
+    $('#bucket-list').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-bk]'); if (!b) return;
+      toggleBucket(Number(b.dataset.bk), b);
+    });
+
+    // 彩蛋：暗号
+    let buf = '';
+    document.addEventListener('keydown', (e) => {
+      if (e.key.length !== 1) return;
+      if (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+      buf = (buf + e.key).slice(-24);
+      const sec = (state.config.secret || '').trim();
+      if (sec && buf.endsWith(sec)) {
+        buf = '';
+        showSecret();
+      }
+    });
+
+    // 品牌长按彩蛋
+    let brandClicks = 0, brandTimer = null;
+    $('#brand').addEventListener('click', () => {
+      brandClicks++;
+      clearTimeout(brandTimer);
+      brandTimer = setTimeout(() => { brandClicks = 0; }, 1800);
+      if (brandClicks >= 7) {
+        brandClicks = 0;
+        burst(window.innerWidth / 2, 120, '✨', 22);
+        toast('10·19  23:45 —— 时间从此有了名字');
+      }
+    });
+  }
+
+  function showSecret() {
+    const msg = state.config.secretMsg || '我一直在。';
+    openModal(`
+      <div style="text-align:center;padding:10px 0 6px">
+        <div style="font-size:34px">💌</div>
+        <p style="margin-top:14px;font-family:Georgia,'Songti SC',serif;font-size:17px;line-height:2">${esc(msg)}</p>
+        <p style="font-size:11.5px;color:var(--faint);margin-top:16px;letter-spacing:.2em">只有知道暗号的人才会看到这里</p>
+      </div>
+      <div class="modal-actions" style="justify-content:center">
+        <button class="btn btn-primary" data-close="1" type="button">收下</button>
+      </div>
+    `);
+    burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 18);
+  }
+
+  /* ==================== 星空背景 ==================== */
+  function initSky() {
+    const cv = $('#sky');
+    const ctx = cv.getContext('2d');
+    let W = 0, H = 0, stars = [], shooting = null, raf = null;
+
+    function resize() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = cv.clientWidth; H = cv.clientHeight;
+      cv.width = W * dpr; cv.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const count = Math.round(Math.min(160, (W * H) / 14000));
+      stars = Array.from({ length: count }, () => ({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: Math.random() * 1.3 + 0.25,
+        a: Math.random() * 0.6 + 0.15,
+        tw: Math.random() * Math.PI * 2,
+        sp: Math.random() * 0.014 + 0.004
+      }));
+    }
+
+    function loop() {
+      // 只有墨夜那套纸需要星星，白天就别空转了
+      if (document.documentElement.dataset.theme !== 'night') {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      ctx.clearRect(0, 0, W, H);
+      for (const s of stars) {
+        s.tw += s.sp;
+        const a = s.a * (0.55 + 0.45 * Math.sin(s.tw));
+        ctx.globalAlpha = a;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+        s.y -= 0.045;
+        if (s.y < -2) { s.y = H + 2; s.x = Math.random() * W; }
+      }
+      ctx.globalAlpha = 1;
+
+      if (!shooting && Math.random() < 0.0035) {
+        shooting = { x: Math.random() * W * 0.7, y: Math.random() * H * 0.4, vx: 3.4, vy: 1.7, life: 1 };
+      }
+      if (shooting) {
+        const st = shooting;
+        st.x += st.vx * 4; st.y += st.vy * 4; st.life -= 0.014;
+        const g = ctx.createLinearGradient(st.x, st.y, st.x - 90, st.y - 45);
+        g.addColorStop(0, `rgba(255,255,255,${Math.max(0, st.life)})`);
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.strokeStyle = g; ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(st.x, st.y); ctx.lineTo(st.x - 90, st.y - 45); ctx.stroke();
+        if (st.life <= 0 || st.x > W + 100) shooting = null;
+      }
+      raf = requestAnimationFrame(loop);
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+    const reduce = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    if (!reduce) loop();
+    else { for (const s of stars) { ctx.globalAlpha = s.a; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); } }
+  }
+
+  /* ==================== 启动 ==================== */
+  function init() {
+    applyTheme();
+    bind();
+    // 星空只是背景：画不出来也不能把整册拖垮
+    try { initSky(); } catch (e) { console.warn('星空没点亮：', e); }
+    renderAll();
+    route();
+
+    // 一点跟着指针走的暖光（桌面端）
+    if (window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      let raf = null;
+      window.addEventListener('pointermove', (e) => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          const root = document.documentElement;
+          root.style.setProperty('--mx', e.clientX + 'px');
+          root.style.setProperty('--my', e.clientY + 'px');
+          raf = null;
+        });
+      }, { passive: true });
+    }
+
+    window.addEventListener('hashchange', () => {
+      const h = location.hash.slice(1);
+      if (h === 'poster' || h === 'sync') { route(); return; }
+      if (h !== currentPage) go(PAGES.indexOf(h) >= 0 ? h : 'home');
+    });
+
+    // 用网址打开时注册离线缓存：加到主屏幕以后断网也能翻这一册
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+
+    // 秒针
+    setInterval(() => {
+      if (currentPage === 'home') {
+        const ms = elapsedMs();
+        const rem = Math.abs(ms) % DAY;
+        $('#h-h').textContent = pad(Math.floor(rem / 3600000));
+        $('#h-m').textContent = pad(Math.floor((rem % 3600000) / 60000));
+        $('#h-s').textContent = pad(Math.floor((rem % 60000) / 1000));
+        // 跨天时整页刷新数字
+        if (Math.floor(Math.abs(ms) / DAY) !== lastShownDay) renderHome();
+      }
+    }, 1000);
+
+    // 每分钟刷新倒数；主题选「随时刻」时顺手换纸
+    setInterval(() => {
+      if (currentPage === 'days') renderDays();
+      if (currentPage === 'capsule') renderCapsules();
+      if (normalizeTheme(state.config.theme) === 'auto') applyTheme();
+    }, 60000);
+
+    console.log('%c拾玖 · 时光', 'color:#b7402b;font-size:14px', '已加载 · 一册纸上的纪念册 · 数据保存在本地');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
