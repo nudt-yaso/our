@@ -43,7 +43,6 @@
   }
   function cnYear(y) { return String(y).split('').map((c) => CN_D[+c] || c).join(''); }
   function cnDate(d) { return `${cnYear(d.getFullYear())}年${cnNum(d.getMonth() + 1)}月${cnNum(d.getDate())}日`; }
-  function cnClock(d) { return `${cnNum(d.getHours())}时${cnNum(d.getMinutes())}分`; }
 
   /* ==================== 状态 ==================== */
   const DEFAULT_CONFIG = {
@@ -53,7 +52,7 @@
     theme: 'auto',
     secret: '1919',
     secretMsg: '无论多久，我还是会选择你。',
-    sync: { provider: 'github', token: '', gist: '', lastAt: 0 }
+    sync: { provider: 'github', token: '', gist: '', lastAt: 0, auto: false }
   };
 
   /* ==================== 主题：纸 / 夜 / 胭脂 ==================== */
@@ -91,6 +90,7 @@
       anns: [{ id: uid(), name: '每个月的那一天', date: DEFAULT_START.slice(0, 10), repeat: 'month', emoji: '🌙' }],
       capsules: [],
       bucket: {},
+      bucketItems: [],
       checkins: {},
       qa: [],
       seen: { banner: false }
@@ -114,6 +114,7 @@
         capsules: Array.isArray(o.capsules) ? o.capsules : [],
         qa: Array.isArray(o.qa) ? o.qa : [],
         bucket: o.bucket && typeof o.bucket === 'object' ? o.bucket : {},
+        bucketItems: Array.isArray(o.bucketItems) ? o.bucketItems : [],
         checkins: o.checkins && typeof o.checkins === 'object' ? o.checkins : {},
         seen: { ...base.seen, ...(o.seen || {}) }
       };
@@ -128,6 +129,8 @@
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
+      // 开了自动同步的话，写完过几秒自己推上去
+      if (typeof scheduleAutoSync === 'function') scheduleAutoSync();
       return true;
     } catch (e) {
       toast('存储空间不足啦，试试删掉几张照片～');
@@ -311,14 +314,11 @@
     $('#h-s').textContent = pad(s);
 
     const sd = startDate();
-    $('#h-since').textContent = `自 ${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())} 起`;
     const brandSub = $('.brand-sub');
     if (brandSub) brandSub.textContent = `since ${pad(sd.getMonth() + 1)}.${pad(sd.getDate())}`;
     $('#h-names').innerHTML = `<span>${esc(state.config.me)}</span><span class="hn-heart">♥</span><span>${esc(state.config.you)}</span>`;
 
-    // 竖排的汉字日子 + 页面标题
-    const vd = $('#h-vdate');
-    if (vd) vd.textContent = `始于${cnDate(sd)}`;
+    // 页面标题跟着天数走（起点的具体日期只留在设置里，不摆在首页）
     document.title = neg ? `还有 ${days} 天 · 拾玖时光` : `第 ${days} 天 · 拾玖时光`;
 
     // 下一个纪念日
@@ -424,8 +424,6 @@
     const b = $('#banner-year');
     if (state.seen.banner) { b.hidden = true; return; }
     b.hidden = false;
-    const sd = startDate();
-    $('#banner-date').textContent = `${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())}`;
   }
 
   /* ==================== 纪念日页 ==================== */
@@ -442,9 +440,6 @@
     $('#ann-hero-num').textContent = left;
     $('#ann-hero-date').textContent = fmtDate(nx.date) + (left === 0 ? ' · 就是今天' : '');
     $('#ann-hero-bar').style.width = pct + '%';
-
-    const sd = startDate();
-    $('#ann-start').textContent = `起点 · ${fmtDate(sd)} ${pad(sd.getHours())}:${pad(sd.getMinutes())}`;
 
     // 里程碑
     const ms = $('#ms-list');
@@ -756,7 +751,7 @@
     const tKey = ymd(new Date());
     const exist = state.qa.find((x) => x.date === tKey);
     $('#q-answer').value = exist ? exist.a : '';
-    $('#q-state').textContent = exist ? '今天已经答过了，可以再改。' : '答完会存进这里，只有你们能看到。';
+    $('#q-state').textContent = exist ? '今天已经答过了，可以再改。' : '答完会存进这里，只有我们能看到。';
 
     const hist = state.qa.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
     $('#q-history').innerHTML = hist.length ? hist.map((x) => `
@@ -815,68 +810,152 @@
     });
   }
 
-  /* ==================== 一百件小事 ==================== */
+  /* ==================== 一百件小事（可以自己编辑） ==================== */
   let bucketCat = '全部';
 
-  function bucketCats() {
+  /* 第一次打开：把 data.js 里的清单搬进 state，并给每件一个稳定的 id */
+  function ensureBucketItems() {
+    if (!Array.isArray(state.bucketItems)) state.bucketItems = [];
+    if (!state.bucketItems.length) {
+      state.bucketItems = D.BUCKET.map((x, i) => ({ id: 'b' + i, t: x[0], c: x[1] }));
+      // 老版本按序号记的，顺手迁成 id
+      const old = state.bucket || {};
+      const next = {};
+      Object.keys(old).forEach((k) => {
+        const n = Number(k);
+        next[Number.isInteger(n) && String(n) === k ? ('b' + n) : k] = old[k];
+      });
+      state.bucket = next;
+      save();
+    }
+    return state.bucketItems;
+  }
+
+  function bucketCats(items) {
     const set = [];
-    D.BUCKET.forEach((x) => { if (set.indexOf(x[1]) < 0) set.push(x[1]); });
+    items.forEach((x) => { if (x.c && set.indexOf(x.c) < 0) set.push(x.c); });
     return set;
   }
 
   function renderBucket() {
-    const doneCount = Object.keys(state.bucket).length;
+    const items = ensureBucketItems();
+    const total = items.length;
+    const doneCount = items.filter((x) => state.bucket[x.id]).length;
+    const left = Math.max(0, total - doneCount);
+
     $('#b-done').textContent = doneCount;
-    $('#b-bar').style.width = (doneCount / D.BUCKET.length) * 100 + '%';
-    const tips = [
-      '先划掉第一件吧。',
-      '已经完成 ' + doneCount + ' 件，还剩 ' + (D.BUCKET.length - doneCount) + ' 件。',
-      '慢一点也没关系，反正有一辈子。'
-    ];
-    $('#b-tip').textContent = doneCount === 0 ? tips[0] : (doneCount >= 100 ? '全部完成，你们太厉害了 🏆' : tips[1]);
+    const totalEl = $('#b-total');
+    if (totalEl) totalEl.textContent = total;
+    $('#b-bar').style.width = (total ? (doneCount / total) * 100 : 0) + '%';
 
-    const cats = ['全部', ...bucketCats()];
+    $('#b-tip').textContent = !total
+      ? '清单空了，点下面「＋ 添一件」把你们的事写回来。'
+      : doneCount === 0
+        ? '先划掉第一件吧。'
+        : (left === 0 ? '全部完成，我们太厉害了 🏆' : `已经完成 ${doneCount} 件，还剩 ${left} 件。`);
+
+    const cats = ['全部', ...bucketCats(items)];
+    if (cats.indexOf(bucketCat) < 0) bucketCat = '全部';
     $('#b-chips').innerHTML = cats.map((c) =>
-      `<button class="chip ${c === bucketCat ? 'is-on' : ''}" data-cat="${c}" type="button">${esc(c)}</button>`).join('');
+      `<button class="chip ${c === bucketCat ? 'is-on' : ''}" data-cat="${esc(c)}" type="button">${esc(c)}</button>`).join('');
 
-    const list = D.BUCKET.map((x, i) => ({ i, t: x[0], c: x[1] }))
-      .filter((x) => bucketCat === '全部' || x.c === bucketCat);
+    const rows = items
+      .map((x, i) => ({ ...x, no: i + 1 }))
+      .filter((x) => bucketCat === '全部' || x.c === bucketCat)
+      .map((x) => {
+        const done = !!state.bucket[x.id];
+        return `<div class="bk ${done ? 'is-done' : ''}">
+          <button class="bk-main" type="button" data-bk="${esc(x.id)}">
+            <span class="bk-no">${pad(x.no, 2)}</span>
+            <span class="bk-t">${esc(x.t)}</span>
+            ${x.c ? `<span class="bk-cat">${esc(x.c)}</span>` : ''}
+            <span class="bk-box"><svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span>
+          </button>
+          <button class="bk-edit" type="button" data-edit="${esc(x.id)}" title="编辑这一件" aria-label="编辑这一件">✎</button>
+        </div>`;
+      }).join('');
 
-    $('#bucket-list').innerHTML = list.map((x) => {
-      const done = !!state.bucket[x.i];
-      return `<button class="bk ${done ? 'is-done' : ''}" type="button" data-bk="${x.i}">
-        <span class="bk-no">${pad(x.i + 1, 2)}</span>
-        <span class="bk-t">${esc(x.t)}</span>
-        <span class="bk-cat">${esc(x.c)}</span>
-        <span class="bk-box"><svg viewBox="0 0 16 16"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></span>
-      </button>`;
-    }).join('');
+    $('#bucket-list').innerHTML = rows + `<button class="bk-add" type="button" id="bk-add">
+      <span>＋ 添一件</span>
+      <i>写一件只有我们懂的</i>
+    </button>`;
   }
 
-  function toggleBucket(i, el) {
-    if (state.bucket[i]) {
-      delete state.bucket[i];
+  function toggleBucket(id, el) {
+    if (!id) return;
+    const items = ensureBucketItems();
+    if (state.bucket[id]) {
+      delete state.bucket[id];
     } else {
-      state.bucket[i] = Date.now();
+      state.bucket[id] = Date.now();
       if (el) burstAt(el);
-      const doneCount = Object.keys(state.bucket).length;
+      const doneCount = items.filter((x) => state.bucket[x.id]).length;
       const t = D.BUCKET_DONE_TIPS[Math.floor(Math.random() * D.BUCKET_DONE_TIPS.length)]
-        .replace('{n}', doneCount).replace('{left}', D.BUCKET.length - doneCount);
+        .replace('{n}', doneCount).replace('{left}', Math.max(0, items.length - doneCount));
       toast(t);
     }
     save(); renderBucket(); renderHome();
   }
 
+  /* 添一件 / 改一件 */
+  function openBucketItemModal(id) {
+    const items = ensureBucketItems();
+    const cur = id ? items.find((x) => x.id === id) : null;
+    const cats = bucketCats(items);
+    openModal(`
+      <h3>${cur ? '改这件小事' : '添一件小事'}</h3>
+      <p class="modal-sub">${cur ? '改完之后，打勾的状态不会变。' : '越具体越容易真的去做。'}</p>
+      <div class="field">
+        <label>写什么</label>
+        <input type="text" id="bk-text" maxlength="60" value="${cur ? esc(cur.t) : ''}" placeholder="比如：一起去看一次海">
+      </div>
+      <div class="field">
+        <label>分类（可以空着，也可以自己起一个）</label>
+        <input type="text" id="bk-cat" maxlength="8" value="${cur ? esc(cur.c || '') : ''}" placeholder="一起 / 吃喝 / 旅行 / 甜 / 仪式 / 成长" list="bk-cats">
+        <datalist id="bk-cats">${cats.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+      </div>
+      <div class="modal-actions">
+        ${cur ? '<button class="btn btn-danger spacer" id="bk-del" type="button">删掉这件</button>' : ''}
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="bk-save" type="button">${cur ? '改好了' : '加进去'}</button>
+      </div>
+    `, (root) => {
+      if (cur) {
+        $('#bk-del', root).onclick = () => {
+          if (!confirm('删掉这件小事？它的打勾记录也会一起没掉。')) return;
+          state.bucketItems = state.bucketItems.filter((x) => x.id !== cur.id);
+          delete state.bucket[cur.id];
+          save(); closeModal(); renderBucket(); renderHome();
+          toast('删掉了');
+        };
+      }
+      $('#bk-save', root).onclick = () => {
+        const text = $('#bk-text', root).value.trim();
+        const cat = $('#bk-cat', root).value.trim();
+        if (!text) { toast('写点什么呀'); return; }
+        if (cur) {
+          cur.t = text;
+          cur.c = cat;
+        } else {
+          state.bucketItems.push({ id: uid(), t: text, c: cat });
+        }
+        save(); closeModal(); renderBucket(); renderHome();
+        toast(cur ? '改好了' : '加进去了');
+        if (!cur) burst(window.innerWidth / 2, window.innerHeight / 2, '📝', 8);
+      };
+    });
+  }
+
   function randomPick() {
-    const all = D.BUCKET.map((x, i) => i).filter((i) => !state.bucket[i]);
-    if (!all.length) { toast('一百件都完成啦 🏆'); return; }
-    const i = all[Math.floor(Math.random() * all.length)];
+    const items = ensureBucketItems().filter((x) => !state.bucket[x.id]);
+    if (!items.length) { toast('清单都完成啦 🏆'); return; }
+    const pick = items[Math.floor(Math.random() * items.length)];
     openModal(`
       <h3>今天就做这一件</h3>
-      <p class="modal-sub">命运抽中了第 ${i + 1} 件：</p>
+      <p class="modal-sub">命运抽中了：</p>
       <div class="card" style="padding:22px;text-align:center;font-size:16px;line-height:1.8">
-        ${esc(D.BUCKET[i][0])}
-        <div style="font-size:11.5px;color:var(--faint);margin-top:10px;letter-spacing:.16em">${esc(D.BUCKET[i][1])}</div>
+        ${esc(pick.t)}
+        ${pick.c ? `<div style="font-size:11.5px;color:var(--faint);margin-top:10px;letter-spacing:.16em">${esc(pick.c)}</div>` : ''}
       </div>
       <div class="modal-actions">
         <button class="btn" id="rp-again" type="button">换一个</button>
@@ -885,7 +964,7 @@
     `, (root) => {
       $('#rp-again', root).onclick = () => { closeModal(); setTimeout(randomPick, 120); };
       $('#rp-ok', root).onclick = () => {
-        state.bucket[i] = Date.now();
+        state.bucket[pick.id] = Date.now();
         save(); closeModal(); renderBucket(); renderHome();
         toast('划掉一件 ✅ 记得回来记一笔');
       };
@@ -1036,18 +1115,21 @@
 
   function syncCfg() {
     if (!state.config.sync || typeof state.config.sync !== 'object') {
-      state.config.sync = { provider: 'github', token: '', gist: '', lastAt: 0 };
+      state.config.sync = { provider: 'github', token: '', gist: '', lastAt: 0, auto: false };
     }
-    return state.config.sync;
+    const c = state.config.sync;
+    if (typeof c.auto !== 'boolean') c.auto = false;
+    return c;
   }
 
   function syncStateText() {
     const c = syncCfg();
     if (!c.gist) return '未开启 · 也可以只靠同步包互传';
     const name = (SYNC_PROVIDERS[c.provider] || {}).name || c.provider;
-    if (!c.lastAt) return `已连接 ${name} · 还没同步过`;
+    const auto = c.auto ? ' · 自动同步' : '';
+    if (!c.lastAt) return `已连接 ${name}${auto} · 还没同步过`;
     const d = new Date(c.lastAt);
-    return `已连接 ${name} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `已连接 ${name}${auto} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   /* 太大就把照片剔掉，先保住文字 */
@@ -1095,43 +1177,94 @@
     }
   }
 
-  async function syncNow(log) {
+  /* 核心：拉取 → 合并 → 推送。手动和自动两条路共用 */
+  let syncBusy = false;
+  let autoSyncTimer = null;
+  let lastAutoAt = 0;
+
+  async function runSync(log) {
     const c = syncCfg();
     const p = SYNC_PROVIDERS[c.provider];
-    if (!c.token || !c.gist) { log('还没有令牌或同步码，先创建或加入'); return; }
-
-    log('正在拉取…');
-    let stat = { added: 0, updated: 0, config: false };
+    const res = { ok: false, added: 0, updated: 0, stripped: false, reason: '' };
+    if (!c.token || !c.gist) { res.reason = 'not-configured'; return res; }
+    if (syncBusy) { res.reason = 'busy'; return res; }
+    syncBusy = true;
     try {
+      log('正在拉取…');
       const r = await p.read(c.token, c.gist);
-      if (!r.ok) { log(`拉取失败：HTTP ${r.status} · ${httpHint(r.status)}`); return; }
+      if (!r.ok) {
+        res.reason = `HTTP ${r.status} · ${httpHint(r.status)}`;
+        log('拉取失败：' + res.reason);
+        return res;
+      }
       const js = await r.json();
       const content = p.pick(js);
       if (content) {
         try {
-          stat = mergeState(JSON.parse(content));
+          const merged = mergeState(JSON.parse(content));
+          res.added = merged.added;
+          res.updated = merged.updated;
           save(); renderAll();
-        } catch (e) { log('对方的数据解不开，这次只推送不合并'); }
+        } catch (e) {
+          log('对方的数据解不开，这次只推送不合并');
+        }
       } else {
         log('对方还没推送过内容');
       }
-      log(`合并完成：新增 ${stat.added} 条，更新 ${stat.updated} 条`);
-    } catch (e) {
-      log('网络错误：' + e.message + '（可能是被拦截或没网）');
-      return;
-    }
+      log(`合并完成：新增 ${res.added} 条，更新 ${res.updated} 条`);
 
-    log('正在推送…');
-    const payload = syncPayload();
-    try {
+      log('正在推送…');
+      const payload = syncPayload();
       const w = await p.write(c.token, c.gist, payload.text);
-      if (!w.ok) { log(`推送失败：HTTP ${w.status} · ${httpHint(w.status)}`); return; }
+      if (!w.ok) {
+        res.reason = `HTTP ${w.status} · ${httpHint(w.status)}`;
+        log('推送失败：' + res.reason);
+        return res;
+      }
       c.lastAt = Date.now();
       save();
+      res.ok = true;
+      res.stripped = payload.stripped;
       log('同步完成 ✓' + (payload.stripped ? '（照片太大，这次只同步了文字）' : ''));
-      if (stat.added) burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 12);
+      if (res.added) burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 12);
+      return res;
     } catch (e) {
-      log('网络错误：' + e.message);
+      res.reason = e && e.message ? e.message : '网络错误';
+      log('网络错误：' + res.reason + '（可能是被拦截或没网）');
+      return res;
+    } finally {
+      syncBusy = false;
+    }
+  }
+
+  /* 手动：在弹层里点「立即同步」 */
+  async function syncNow(log) {
+    const c = syncCfg();
+    if (!c.token || !c.gist) { log('还没有令牌或同步码，先创建或加入'); return; }
+    const r = await runSync(log);
+    if (r.reason === 'busy') log('正在同步中，稍等一下…');
+  }
+
+  /* 自动：打开 App / 回到前台 / 写完一条之后 */
+  let autoSyncReady = function () {
+    const c = syncCfg();
+    return !!(c.auto && c.token && c.gist);
+  };
+
+  function scheduleAutoSync(delay) {
+    if (syncBusy || !autoSyncReady()) return;
+    clearTimeout(autoSyncTimer);
+    autoSyncTimer = setTimeout(function () { autoSync('write'); }, delay == null ? 8000 : delay);
+  }
+
+  async function autoSync(trigger) {
+    if (!autoSyncReady() || syncBusy) return;
+    // 打开/回前台触发时别太频繁
+    if (trigger !== 'write' && Date.now() - lastAutoAt < 30000) return;
+    lastAutoAt = Date.now();
+    const r = await runSync(function () {});
+    if (r.ok && (r.added || r.updated)) {
+      toast(r.added ? `已和对方同步 · 新增 ${r.added} 条` : '已和对方同步 · 有更新');
     }
   }
 
@@ -1171,6 +1304,11 @@
       <div class="field">
         <label>同步码</label>
         <input type="text" id="sp-gist" value="${esc(c.gist)}" placeholder="第一次用点下面「创建」">
+      </div>
+
+      <div class="set-row">
+        <div class="set-label"><b>自动同步</b><span>打开 App、切回前台、写完 8 秒后自动跟对方对齐一次</span></div>
+        <button class="btn btn-sm ${c.auto ? 'btn-primary' : ''}" id="sp-auto" type="button">${c.auto ? '已开' : '关着'}</button>
       </div>
 
       <div class="sp-actions">
@@ -1218,6 +1356,21 @@
         $('#sp-gist', root).value = syncCfg().gist;
       };
       $('#sp-sync', root).onclick = async () => { collect(); await syncNow(log); };
+
+      $('#sp-auto', root).onclick = () => {
+        collect();
+        const cc = syncCfg();
+        cc.auto = !cc.auto;
+        save();
+        const b = $('#sp-auto', root);
+        b.textContent = cc.auto ? '已开' : '关着';
+        b.classList.toggle('btn-primary', cc.auto);
+        log(cc.auto ? '自动同步：已开启' : '自动同步：已关闭');
+        if (cc.auto) {
+          if (!cc.token || !cc.gist) log('还缺令牌或同步码，填好之后才会真的同步');
+          else scheduleAutoSync(1500);
+        }
+      };
       $('#sp-invite', root).onclick = async () => {
         collect();
         const s = inviteString();
@@ -1497,7 +1650,7 @@
     // 起点
     ctx.fillStyle = pal.faint;
     ctx.font = `400 24px ${FS}`;
-    ctx.fillText(`始于 ${cnDate(sd)} ${cnClock(sd)}`, W / 2, 726);
+    ctx.fillText(`始于 ${cnDate(sd)}`, W / 2, 726);
 
     // 名字
     const me = state.config.me, you = state.config.you;
@@ -1774,8 +1927,11 @@
       renderBucket();
     });
     $('#bucket-list').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-bk]'); if (!b) return;
-      toggleBucket(Number(b.dataset.bk), b);
+      if (e.target.closest('#bk-add')) { openBucketItemModal(null); return; }
+      const ed = e.target.closest('[data-edit]');
+      if (ed) { openBucketItemModal(ed.dataset.edit); return; }
+      const b = e.target.closest('[data-bk]');
+      if (b) toggleBucket(b.dataset.bk, b);
     });
 
     // 彩蛋：暗号
@@ -1891,6 +2047,14 @@
     try { initSky(); } catch (e) { console.warn('星空没点亮：', e); }
     renderAll();
     route();
+
+    // 自动同步：打开 App 对齐一次，从后台切回来再对齐一次
+    try {
+      if (autoSyncReady()) setTimeout(function () { autoSync('open'); }, 2500);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') autoSync('focus');
+      });
+    } catch (e) { console.warn('自动同步没挂上：', e); }
 
     // 一点跟着指针走的暖光（桌面端）
     if (window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {

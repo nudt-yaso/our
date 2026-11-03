@@ -380,10 +380,6 @@ html[data-theme="night"] .hero-num{ text-shadow:0 0 40px color-mix(in srgb, var(
 }
 .ck i{ font-style:normal; font-size:10px; color:var(--faint); letter-spacing:.1em; }
 .ck-sep{ color:var(--rule-hi); font-size:12px; }
-.hero-since{
-  margin-top:14px; font-size:11.5px; color:var(--faint);
-  letter-spacing:.06em;
-}
 .hero-names{
   margin-top:18px;
   padding-top:16px;
@@ -394,20 +390,11 @@ html[data-theme="night"] .hero-num{ text-shadow:0 0 40px color-mix(in srgb, var(
 }
 .hero-names .hn-heart{ color:var(--vermilion); font-size:11px; letter-spacing:0; }
 
-/* 竖排的日子 */
+/* 右下角的「今日已记」印章 */
 .hero-side{
   position:absolute; top:20px; right:24px; bottom:20px;
-  display:flex; flex-direction:column; align-items:flex-end; justify-content:space-between;
+  display:flex; flex-direction:column; align-items:flex-end; justify-content:flex-end;
   pointer-events:none;
-}
-.hero-vdate{
-  writing-mode:vertical-rl;
-  text-orientation:upright;
-  font-family:var(--font-serif);
-  font-size:11px; letter-spacing:.22em;
-  color:var(--faint);
-  max-height:100%;
-  overflow:hidden;
 }
 .hero-stamp{
   width:34px;
@@ -696,12 +683,6 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
   display:block; height:100%; width:0; border-radius:99px;
   background:linear-gradient(90deg, var(--gold), var(--vermilion));
   transition:width 1.2s var(--ease-out);
-}
-.ann-start{
-  margin-top:16px; padding-top:12px;
-  border-top:1px dashed var(--rule);
-  font-size:10.5px; color:var(--faint); letter-spacing:.1em;
-  font-variant-numeric:tabular-nums;
 }
 
 /* ------------------------------------------------------------
@@ -1096,16 +1077,23 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
 
 .bucket-list{ display:grid; gap:0; }
 .bk{
-  display:flex; align-items:center; gap:11px;
-  padding:12px 2px;
+  display:flex; align-items:center; gap:2px;
   border-bottom:1px solid var(--rule);
   background:transparent;
-  text-align:left; width:100%;
   transition:.26s var(--ease);
   position:relative;
 }
 .bk:first-child{ border-top:1px solid var(--rule); }
-.bk:hover{ background:color-mix(in srgb, var(--ink) 3%, transparent); padding-left:8px; padding-right:8px; }
+.bk-main{
+  display:flex; align-items:center; gap:11px;
+  flex:1; min-width:0;
+  padding:12px 2px;
+  text-align:left;
+  background:transparent;
+  border:0;
+  transition:.26s var(--ease);
+}
+.bk:hover .bk-main{ background:color-mix(in srgb, var(--ink) 3%, transparent); padding-left:8px; }
 .bk-no{
   font-family:var(--font-mono);
   font-size:9.5px; color:var(--faint); width:20px; flex:0 0 auto;
@@ -1128,10 +1116,36 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
   stroke-linecap:round; stroke-linejoin:round;
   opacity:0; transition:.2s;
 }
+/* 每一行右边的小铅笔 */
+.bk-edit{
+  width:26px; height:26px; flex:0 0 auto;
+  border-radius:50%;
+  font-size:12px; line-height:1;
+  color:var(--faint);
+  opacity:0;
+  transition:.22s var(--ease);
+}
+.bk:hover .bk-edit, .bk:focus-within .bk-edit{ opacity:.8; }
+.bk-edit:hover{ opacity:1; color:var(--vermilion); background:var(--vermilion-soft); }
 .bk.is-done .bk-t{ color:var(--faint); text-decoration:line-through; text-decoration-color:color-mix(in srgb, var(--ink) 30%, transparent); }
 .bk.is-done .bk-box{ background:var(--vermilion); border-color:var(--vermilion); }
 .bk.is-done .bk-box svg{ opacity:1; }
 .bk.is-done .bk-no{ color:var(--vermilion); }
+
+/* 清单最后的「添一件」 */
+.bk-add{
+  grid-column:1 / -1;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  width:100%;
+  margin-top:12px; padding:15px 12px;
+  border:1px dashed var(--rule-hi);
+  border-radius:var(--r-md);
+  color:var(--faint);
+  transition:.28s var(--ease);
+}
+.bk-add span{ font-size:13px; letter-spacing:.06em; }
+.bk-add i{ font-style:normal; font-size:10.5px; opacity:.8; }
+.bk-add:hover{ color:var(--ink); border-color:var(--vermilion); background:var(--vermilion-soft); }
 
 /* ------------------------------------------------------------
    23. 底部导航
@@ -1417,17 +1431,12 @@ textarea:focus{
    27. 响应式
    ------------------------------------------------------------ */
 @media (max-width:620px){
-  /* 手机上没有侧栏，就把「始于」那行横过来放在下面 */
+  /* 手机上印章挪到名字下面居中 */
   .hero{ display:flex; flex-direction:column; padding:30px 18px 20px; }
   .hero-side{
     position:static;
     flex-direction:row; align-items:center; justify-content:center; gap:14px;
     margin-top:12px; padding-top:0;
-  }
-  .hero-vdate{
-    writing-mode:horizontal-tb; text-orientation:initial;
-    font-size:10.5px; letter-spacing:.14em;
-    max-height:none;
   }
   .hero-stamp{
     width:auto; padding:2px 8px;
@@ -1496,9 +1505,10 @@ textarea:focus{
 /* 触屏上不要留下 hover 的高位 */
 @media (hover:none){
   .tile:hover,.ann:hover,.btn:hover,.icon-btn:hover,.chip:hover{ transform:none; }
-  .mini:hover,.bk:hover{ padding-left:2px; padding-right:2px; }
+  .mini:hover,.bk:hover .bk-main{ padding-left:2px; padding-right:2px; }
   .tl-card:hover{ transform:none; }
   .ann-del{ opacity:.7; }
+  .bk-edit{ opacity:.7; }
 }
 /* 系统要求更强对比时，把细线加粗一点 */
 @media (prefers-contrast:more){
