@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.github.nudt_yaso.twa",
+      "sha256_cert_fingerprints": [
+        "2F:99:10:96:94:B1:ED:D4:49:D6:F9:D9:57:05:A2:84:30:1B:9B:E9:06:F4:75:3E:F6:2C:A3:16:FD:5A:1E:73"
+      ]
+    }
+  }
+]
