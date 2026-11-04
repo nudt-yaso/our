@@ -123,6 +123,20 @@
         seen: { ...base.seen, ...(o.seen || {}) }
       };
       st.config.theme = normalizeTheme(st.config.theme);
+      // 只有一次：把「还没写作者」的老记录补上本机的称呼，时间轴上就不会有一截空白
+      // 只做一次，是为了别把对方同步过来的老记录也认成自己写的
+      if (!st.seen.byBackfilled) {
+        st.seen.byBackfilled = true;
+        const who = st.config.me;
+        if (who && who !== '我') {
+          (st.moments || []).forEach((m) => { if (m && !m.by) m.by = who; });
+          (st.qa || []).forEach((x) => { if (x && !x.by) x.by = who; });
+          Object.keys(st.checkins || {}).forEach((k) => {
+            const c = st.checkins[k];
+            if (c && typeof c === 'object' && !c.by) c.by = who;
+          });
+        }
+      }
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
