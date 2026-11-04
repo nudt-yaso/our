@@ -11,8 +11,11 @@
   const DAY = 86400000;
 
   /* 内置信封：两台手机装好就自动连上同一个云端信箱，谁都不用填令牌。
+     这把令牌**没有过期日**（2026-11-04 建），所以不会哪天自己断掉。
      想换成自己的空间，在设置里重新创建/加入即可，会覆盖这里 */
-  const BUILTIN_INVITE = 'SJ1.eyJwIjoiZ2l0aHViIiwidCI6ImdocF8yWWljRHNVYjk0c0FHb0FqVDVySFQ0aXdhQjVmRlMya2VwRGciLCJnIjoiYzQ5NmZiNmQ2ZDVmYjlkYjRiZmUwZGVmOWU1MmM3MTMifQ==';
+  const BUILTIN_INVITE = 'SJ1.eyJwIjoiZ2l0aHViIiwidCI6ImdocF9sNWNQMmxUcGF0cWZrM0oxY2ZTRHUyM0RhNnl5SnA0QzhHSzciLCJnIjoiYzQ5NmZiNmQ2ZDVmYjlkYjRiZmUwZGVmOWU1MmM3MTMifQ==';
+  /* 钥匙版本：换一把新的内置钥匙就把这里 +1，已经装好的人下次打开自动换过来 */
+  const KEY_VERSION = 2;
 
   /* ==================== 工具 ==================== */
   const $ = (s, r) => (r || document).querySelector(s);
@@ -137,6 +140,18 @@
           });
         }
       }
+      // 只有一次：合并时曾经塞进来一堆同名同期的纪念日，这里归并成一条
+      if (!st.seen.annDeduped) {
+        st.seen.annDeduped = true;
+        const seenSig = new Set();
+        st.anns = (st.anns || []).filter((a) => {
+          if (!a) return false;
+          const sig = [a.name, a.date, a.repeat].join('|');
+          if (seenSig.has(sig)) return false;
+          seenSig.add(sig);
+          return true;
+        });
+      }
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
@@ -144,11 +159,14 @@
     }
   }
 
+  /* 同步过程里自己写盘，不能再去排下一轮同步（否则会自己喂自己，一直转） */
+  let syncSaving = false;
+
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
       // 开了自动同步的话，写完过几秒自己推上去
-      if (typeof scheduleAutoSync === 'function') scheduleAutoSync();
+      if (!syncSaving && typeof scheduleAutoSync === 'function') scheduleAutoSync();
       return true;
     } catch (e) {
       toast('存储空间不足啦，试试删掉几张照片～');
@@ -1043,7 +1061,22 @@
 
     (incoming.anns || []).forEach((a) => {
       if (!a || !a.id) return;
-      if (!has(state.anns, a.id)) { state.anns.push(a); stat.added++; }
+      if (has(state.anns, a.id)) return;
+      // 同名同日期同重复方式的，算同一个纪念日，别再塞一条重复的进来
+      const sig = [a.name, a.date, a.repeat].join('|');
+      if (state.anns.some((x) => x && [x.name, x.date, x.repeat].join('|') === sig)) return;
+      state.anns.push(a); stat.added++;
+    });
+
+    // 一百件小事：按 id 合并，本机勾过的「做过」不会被对方覆盖掉
+    (incoming.bucketItems || []).forEach((it) => {
+      if (!it || !it.id) return;
+      const mine = (state.bucketItems || []).find((x) => x && x.id === it.id);
+      if (!mine) { state.bucketItems.push(it); stat.added++; }
+      else {
+        if (it.done && !mine.done) { mine.done = true; stat.updated++; }
+        if (!mine.text && it.text) { mine.text = it.text; stat.updated++; }
+      }
     });
 
     Object.keys(incoming.bucket || {}).forEach((k) => {
@@ -1151,6 +1184,15 @@
     const c = state.config.sync;
     const seed = parseInvite(BUILTIN_INVITE);
     if (seed) {
+      // 用的是「自己配的」就完全不动它；否则跟着内置那把钥匙走（换新钥匙时自动升级）
+      const mine = c.src === 'user' && c.token && c.gist;
+      if (!mine && c.keyVersion !== KEY_VERSION) {
+        c.provider = seed.p || 'github';
+        c.token = seed.t || '';
+        c.gist = seed.g || '';
+        c.src = 'builtin';
+        c.keyVersion = KEY_VERSION;
+      }
       if (!c.provider) c.provider = seed.p || 'github';
       if (!c.token) c.token = seed.t || '';
       if (!c.gist) c.gist = seed.g || '';
@@ -1178,9 +1220,17 @@
     if (!c.gist) return '未开启 · 也可以只靠同步包互传';
     const name = (SYNC_PROVIDERS[c.provider] || {}).name || c.provider;
     const auto = c.auto ? ' · 自动同步' : '';
+    // 上次同步是失败的 → 直接说清楚，别让人以为还在同步（云端那份不会因此消失）
+    if (c.failAt && (!c.lastAt || c.failAt > c.lastAt)) {
+      const f = new Date(c.failAt);
+      const why = c.failStatus ? `（HTTP ${c.failStatus}）` : '';
+      return `⚠ 上次没同步成功${why} · ${f.getMonth() + 1} 月 ${f.getDate()} 日 ${pad(f.getHours())}:${pad(f.getMinutes())} · 云端那份还在，点「配置」看日志`;
+    }
     if (!c.lastAt) return `已连接 ${name}${auto} · 还没同步过`;
     const d = new Date(c.lastAt);
-    return `已连接 ${name}${auto} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const days = Math.floor((Date.now() - c.lastAt) / 86400000);
+    const stale = days >= 14 ? ` · 已经 ${days} 天没同步，最好打开一次` : '';
+    return `已连接 ${name}${auto} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}${stale}`;
   }
 
   /* 太大就把照片剔掉，先保住文字；钥匙本身永远不写进云端 */
@@ -1340,6 +1390,7 @@
     if (!c.token || !c.gist) { res.reason = 'not-configured'; return res; }
     if (syncBusy) { res.reason = 'busy'; return res; }
     syncBusy = true;
+    syncSaving = true;
     try {
       // 诊断：把这次真正用到的凭据打出来，省得靠猜
       log(`凭据：${c.provider} · 令牌 ${c.token.length} 位（${c.token.slice(0, 4)}…）· 同步码 ${String(c.gist).slice(0, 8)}…`);
@@ -1351,6 +1402,7 @@
       }
       if (!r.ok) {
         res.reason = `HTTP ${r.status} · ${httpHint(r.status)}`;
+        c.failAt = Date.now(); c.failStatus = r.status; save();
         log('拉取失败：' + res.reason);
         return res;
       }
@@ -1375,10 +1427,13 @@
       const w = await p.write(c.token, c.gist, payload.text);
       if (!w.ok) {
         res.reason = `HTTP ${w.status} · ${httpHint(w.status)}`;
+        c.failAt = Date.now(); c.failStatus = w.status; save();
         log('推送失败：' + res.reason);
         return res;
       }
       c.lastAt = Date.now();
+      c.failAt = 0;
+      c.failStatus = 0;
       save();
       res.ok = true;
       res.stripped = payload.stripped;
@@ -1391,6 +1446,7 @@
       return res;
     } finally {
       syncBusy = false;
+      syncSaving = false;
     }
   }
 
@@ -1416,8 +1472,8 @@
 
   async function autoSync(trigger) {
     if (!autoSyncReady() || syncBusy) return;
-    // 打开/回前台触发时别太频繁
-    if (trigger !== 'write' && Date.now() - lastAutoAt < 30000) return;
+    // 不管谁触发的，15 秒内不重复跑，避免自己排自己转成风火轮
+    if (Date.now() - lastAutoAt < 15000) return;
     lastAutoAt = Date.now();
     const r = await runSync(function () {});
     if (r.ok && (r.added || r.updated)) {
@@ -1511,6 +1567,10 @@
       $('#sp-create', root).onclick = async () => {
         collect();
         await createSpace(log);
+        const cc = syncCfg();
+        cc.src = 'user';
+        cc.keyVersion = KEY_VERSION;
+        save();
         $('#sp-gist', root).value = syncCfg().gist;
       };
       $('#sp-sync', root).onclick = async () => { collect(); await syncNow(log); };
@@ -1577,6 +1637,8 @@
         cc.provider = o.p === 'gitee' ? 'gitee' : 'github';
         cc.token = o.t;
         cc.gist = o.g;
+        cc.src = 'user';
+        cc.keyVersion = KEY_VERSION;
         provider = cc.provider;
         save();
         $('#sp-token', root).value = cc.token;
@@ -1585,7 +1647,11 @@
         log('已加入，点「立即同步」试试');
       };
       $('#sp-save', root).onclick = () => {
-        collect(); save(); closeModal();
+        const cc = collect();
+        cc.src = 'user';
+        cc.keyVersion = KEY_VERSION;
+        save();
+        closeModal();
         toast('同步设置已保存');
       };
     });
