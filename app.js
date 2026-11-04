@@ -1051,9 +1051,11 @@
   function mergeState(incoming) {
     const stat = { added: 0, updated: 0, config: false };
     const has = (arr, id) => arr.some((x) => x && x.id === id);
+    // 联网自检时混进云端的假记录，永远不再收进来
+    const junk = (m) => !m || m.id === 'e2e1' || /端到端自检/.test(m.text || '');
 
     (incoming.moments || []).forEach((m) => {
-      if (!m || !m.id) return;
+      if (!m || !m.id || junk(m)) return;
       if (!has(state.moments, m.id)) { state.moments.push(m); stat.added++; }
     });
 
@@ -1242,6 +1244,8 @@
   function syncPayload() {
     const clone = JSON.parse(JSON.stringify(state));
     if (clone.config) delete clone.config.sync;
+    // 自检混进来的假记录，别再从任何一台设备推回云端
+    clone.moments = (clone.moments || []).filter((m) => !(m && (m.id === 'e2e1' || /端到端自检/.test(m.text || ''))));
     let text = JSON.stringify(clone);
     let stripped = false;
     if (text.length > 900000) {
