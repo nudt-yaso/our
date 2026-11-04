@@ -140,6 +140,11 @@
           });
         }
       }
+      // 只有一次：我自己做联网自检时往云端写过一条假心动，这里把它摘掉（tag 只匹配那一条）
+      if (!st.seen.junkCleaned) {
+        st.seen.junkCleaned = true;
+        st.moments = (st.moments || []).filter((m) => !(m && (m.id === 'e2e1' || /端到端自检/.test(m.text || ''))));
+      }
       // 只有一次：合并时曾经塞进来一堆同名同期的纪念日，这里归并成一条
       if (!st.seen.annDeduped) {
         st.seen.annDeduped = true;
