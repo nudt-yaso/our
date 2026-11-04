@@ -1246,6 +1246,15 @@
     if (clone.config) delete clone.config.sync;
     // 自检混进来的假记录，别再从任何一台设备推回云端
     clone.moments = (clone.moments || []).filter((m) => !(m && (m.id === 'e2e1' || /端到端自检/.test(m.text || ''))));
+    // 同名同期的纪念日推上去之前先并一遍，云端就不会越堆越多
+    const sigs = new Set();
+    clone.anns = (clone.anns || []).filter((a) => {
+      if (!a) return false;
+      const sig = [a.name, a.date, a.repeat].join('|');
+      if (sigs.has(sig)) return false;
+      sigs.add(sig);
+      return true;
+    });
     let text = JSON.stringify(clone);
     let stripped = false;
     if (text.length > 900000) {
