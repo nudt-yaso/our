@@ -878,6 +878,14 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
   border:1px solid color-mix(in srgb, var(--vermilion) 22%, transparent);
   white-space:nowrap;
 }
+/* 谁写的 */
+.tl-by{
+  font-size:10px; padding:1px 8px; border-radius:99px;
+  color:var(--dim);
+  background:color-mix(in srgb, var(--ink) 5%, transparent);
+  border:1px solid var(--rule);
+  white-space:nowrap;
+}
 .tl-text{
   font-family:var(--font-kai);
   font-size:14px; color:var(--dim); line-height:1.95;

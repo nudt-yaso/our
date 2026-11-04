@@ -5,7 +5,7 @@
    改了 index.html / styles.css / app.js / data.js 之后，
    把下面的 CACHE 版本号 +1，用户下次打开就会自动换新。
    ============================================================ */
-const CACHE = 'shijiu-v2.6.0';
+const CACHE = 'shijiu-v3.0.0';
 const ASSETS = [
   './',
   './index.html',

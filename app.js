@@ -414,7 +414,7 @@
         <span class="mini-emoji">${moodObj ? moodObj.e : (x.kind === 'memory' ? '📖' : '💗')}</span>
         <span class="mini-body">
           <span class="mini-txt">${esc(text)}</span>
-          <span class="mini-time">${fmtMD(d)} · 第 ${dayIndex(d)} 天</span>
+          <span class="mini-time">${fmtMD(d)} · 第 ${dayIndex(d)} 天${x.by ? ' · ' + esc(x.by) + ' 记' : ''}</span>
         </span>
       </button>`;
     }).join('');
@@ -578,6 +578,7 @@
           <div class="tl-top">
             <span class="tl-emoji">${moodObj ? moodObj.e : (x.kind === 'memory' ? '📖' : '💗')}</span>
             <span class="tl-title">${esc(title)}</span>
+            ${x.by ? `<span class="tl-by">${esc(x.by)}</span>` : ''}
             ${moodObj ? `<span class="tl-mood">${esc(moodObj.k)}</span>` : ''}
             <button class="tl-del" data-del-mem="${x.id}" title="删除">删除</button>
           </div>
@@ -649,7 +650,8 @@
         if (!at) { toast('选一个时间'); return; }
         state.moments.push({
           id: uid(), kind, at, text, title,
-          mood: getMood(), img: imgData
+          mood: getMood(), img: imgData,
+          by: state.config.me || ''
         });
         save();
         closeModal();
@@ -758,7 +760,7 @@
       <div class="qa">
         <div class="qa-q">${esc(x.q)}</div>
         <div class="qa-a">${esc(x.a)}</div>
-        <div class="qa-t">${esc(x.date)}</div>
+        <div class="qa-t">${esc(x.date)}${x.by ? ' · ' + esc(x.by) + ' 答' : ''}</div>
       </div>`).join('') : '';
   }
 
@@ -995,7 +997,7 @@
       $('#ck-save', root).onclick = () => {
         const mi = getMood();
         const note = $('#ck-note', root).value.trim();
-        state.checkins[tKey] = { m: mi, n: note };
+        state.checkins[tKey] = { m: mi, n: note, by: state.config.me || '' };
         save(); closeModal(); renderAll();
         toast(`连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次心动`);
         burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
@@ -1145,6 +1147,105 @@
     return { text, stripped };
   }
 
+  /* ==================== 文字同步：复制 / 粘贴，不碰文件 ==================== */
+  function bytesToB64(bytes) {
+    let s = '';
+    const CH = 0x8000;
+    for (let i = 0; i < bytes.length; i += CH) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(s);
+  }
+  function b64ToBytes(b64) {
+    const s = atob(String(b64).replace(/\s+/g, ''));
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  async function gzipBytes(bytes) {
+    if (typeof CompressionStream === 'undefined') return null;
+    const st = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Uint8Array(await new Response(st).arrayBuffer());
+  }
+  async function gunzipBytes(bytes) {
+    if (typeof DecompressionStream === 'undefined') return null;
+    const st = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(st).arrayBuffer());
+  }
+
+  /* 生成一段可以微信发的文本：去掉照片，尽量压缩 */
+  async function makeSyncText() {
+    const clone = JSON.parse(JSON.stringify(state));
+    delete clone.seen;
+    clone.moments = (clone.moments || []).map((m) => ({ ...m, img: '' }));
+    const raw = new TextEncoder().encode(JSON.stringify(clone));
+    // 不压缩：SJT1 任何浏览器都能读；几 KB 的文字，压不压差别不大，兼容更重要
+    return 'SJT1.' + bytesToB64(raw);
+  }
+
+  async function parseSyncText(text) {
+    const s = String(text || '');
+    const m = /SJT([123])\.([A-Za-z0-9+/=]+)/.exec(s.replace(/\s+/g, ' '));
+    if (!m) throw new Error('bad-sync-text');
+    const ver = m[1];
+    const b64 = m[2].replace(/\s+/g, '');
+    let bytes = b64ToBytes(b64);
+    if (ver === '2') {
+      const out = await gunzipBytes(bytes);
+      if (!out) throw new Error('no-decompress');
+      bytes = out;
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  function openTextImport() {
+    openModal(`
+      <h3>粘贴同步文本</h3>
+      <p class="modal-sub">把对方发来的那一整段（<b>SJT2.</b> 开头）粘进来，照片不会同步，文字和打勾都在。</p>
+      <textarea id="txt-in" rows="6" placeholder="SJT2.xxxxxxxx…"></textarea>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="txt-merge" type="button">合并进来</button>
+      </div>
+    `, (root) => {
+      $('#txt-merge', root).onclick = async () => {
+        const raw = $('#txt-in', root).value;
+        if (!raw.trim()) { toast('还没粘贴呢'); return; }
+        let o;
+        try {
+          o = await parseSyncText(raw);
+        } catch (e) {
+          toast('这段不完整，让她重新复制一次发你', 4200);
+          return;
+        }
+        if (!o || !o.config) { toast('这段缺少内容'); return; }
+        const stat = mergeState(o);
+        save(); closeModal(); renderAll();
+        const bits = [];
+        if (stat.added) bits.push(`新增 ${stat.added} 条`);
+        if (stat.updated) bits.push(`更新 ${stat.updated} 条`);
+        toast(bits.length ? '已合并：' + bits.join('、') : '没有新内容，两边已经一样啦', 4200);
+        if (stat.added) burst(window.innerWidth / 2, window.innerHeight / 2, '💗', 12);
+      };
+    });
+  }
+
+  /* 复制不了就退回到一个可手动复制的框 */
+  function openTextCopy(text) {
+    openModal(`
+      <h3>复制这段发给她</h3>
+      <p class="modal-sub">长按下面整段 → 全选 → 复制。照片不会同步，文字和打勾都在。</p>
+      <textarea id="txt-out" rows="8">${esc(text)}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-primary" data-close="1" type="button">好了</button>
+      </div>
+    `, (root) => {
+      const el = $('#txt-out', root);
+      el.focus();
+      el.select();
+    });
+  }
+
   function httpHint(code) {
     return ({
       401: '令牌无效或已过期',
@@ -1190,6 +1291,8 @@
     if (syncBusy) { res.reason = 'busy'; return res; }
     syncBusy = true;
     try {
+      // 诊断：把这次真正用到的凭据打出来，省得靠猜
+      log(`凭据：${c.provider} · 令牌 ${c.token.length} 位（${c.token.slice(0, 4)}…）· 同步码 ${String(c.gist).slice(0, 8)}…`);
       log('正在拉取…');
       const r = await p.read(c.token, c.gist);
       if (!r.ok) {
@@ -1406,6 +1509,26 @@
     });
   }
 
+  /* 把离线缓存整个丢掉再重新加载（localStorage 里的记录不受影响） */
+  async function hardRefresh() {
+    try { closeModal(); } catch (e) { }
+    toast('正在清掉旧缓存…', 1800);
+    try {
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch (e) { console.warn('清缓存失败', e); }
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch (e) { console.warn('注销 SW 失败', e); }
+    setTimeout(() => { location.reload(); }, 300);
+    return true;
+  }
+
   /* 装到主屏幕的提示语 */
   function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent); }
   function isStandalone() {
@@ -1453,12 +1576,25 @@
       </div>
 
       <div class="set-row">
+        <div class="set-label"><b>检查更新</b><span>看到的是旧界面？点一下清掉离线缓存再重新加载（记录不会丢）</span></div>
+        <button class="btn btn-sm" id="set-refresh" type="button">强制更新</button>
+      </div>
+
+      <div class="set-row">
         <div class="set-label"><b>云端同步</b><span>${syncStateText()}</span></div>
         <button class="btn btn-sm" id="set-sync" type="button">配置</button>
       </div>
       <div class="set-row">
         <div class="set-label"><b>导出同步包</b><span>一个 JSON 文件，发给她，或带到新手机</span></div>
         <button class="btn btn-sm" id="set-export" type="button">导出</button>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><b>复制同步文本</b><span>文字版（不含照片）· 微信直接粘给她，不用找文件</span></div>
+        <button class="btn btn-sm" id="set-copytext" type="button">复制</button>
+      </div>
+      <div class="set-row">
+        <div class="set-label"><b>粘贴并合并</b><span>把她发来的那整段粘进来</span></div>
+        <button class="btn btn-sm" id="set-pastetext" type="button">粘贴</button>
       </div>
       <div class="set-row">
         <div class="set-label"><b>合并同步包</b><span>按记录合并，只增不删，不会覆盖你已有的内容</span></div>
@@ -1509,17 +1645,53 @@
         }
       };
 
-      $('#set-export', root).onclick = () => {
+      $('#set-refresh', root).onclick = async () => {
+        const btn = $('#set-refresh', root);
+        btn.disabled = true;
+        btn.textContent = '正在更新…';
+        const ok = await hardRefresh();
+        if (!ok) { btn.disabled = false; btn.textContent = '强制更新'; }
+      };
+
+      $('#set-export', root).onclick = async () => {
+        const name = `拾玖时光-同步包-${ymd(new Date())}.json`;
         const data = JSON.stringify(state, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
+        // 手机上一键分享到微信，省得去文件管理器里找
+        try {
+          const file = new File([blob], name, { type: 'application/json' });
+          if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+            await navigator.share({ files: [file], title: '拾玖时光 · 同步包' });
+            toast('选微信发给她就行');
+            return;
+          }
+        } catch (e) {
+          if (e && e.name === 'AbortError') return; // 用户取消
+        }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `拾玖时光-同步包-${ymd(new Date())}.json`;
+        a.download = name;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1500);
-        toast('同步包已导出，发给她就行');
+        toast('同步包已保存，发给她就行');
       };
+
+      $('#set-copytext', root).onclick = async () => {
+        let text = '';
+        try { text = await makeSyncText(); } catch (e) { toast('生成失败，改用导出同步包'); return; }
+        const hint = text.length > 9000
+          ? '，比较长，微信可能折叠，建议改用导出同步包'
+          : '';
+        try {
+          await navigator.clipboard.writeText(text);
+          toast(`已复制（${text.length} 字符${hint}），粘给她就行`, 4800);
+        } catch (e) {
+          openTextCopy(text);
+        }
+      };
+
+      $('#set-pastetext', root).onclick = () => { openTextImport(); };
 
       $('#set-import', root).onclick = () => $('#set-file', root).click();
       $('#set-file', root).onchange = (e) => {
