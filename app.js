@@ -10,6 +10,10 @@
   const DEFAULT_START = '2026-10-19T23:45';
   const DAY = 86400000;
 
+  /* 内置信封：两台手机装好就自动连上同一个云端信箱，谁都不用填令牌。
+     想换成自己的空间，在设置里重新创建/加入即可，会覆盖这里 */
+  const BUILTIN_INVITE = 'SJ1.eyJwIjoiZ2l0aHViIiwidCI6ImdocF8yWWljRHNVYjk0c0FHb0FqVDVySFQ0aXdhQjVmRlMya2VwRGciLCJnIjoiYzQ5NmZiNmQ2ZDVmYjlkYjRiZmUwZGVmOWU1MmM3MTMifQ==';
+
   /* ==================== 工具 ==================== */
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
@@ -1128,11 +1132,31 @@
 
   function syncCfg() {
     if (!state.config.sync || typeof state.config.sync !== 'object') {
-      state.config.sync = { provider: 'github', token: '', gist: '', lastAt: 0, auto: false };
+      state.config.sync = { provider: 'github', token: '', gist: '', lastAt: 0, auto: true };
     }
     const c = state.config.sync;
-    if (typeof c.auto !== 'boolean') c.auto = false;
+    const seed = parseInvite(BUILTIN_INVITE);
+    if (seed) {
+      if (!c.provider) c.provider = seed.p || 'github';
+      if (!c.token) c.token = seed.t || '';
+      if (!c.gist) c.gist = seed.g || '';
+    }
+    if (typeof c.auto !== 'boolean') c.auto = true;
+    // 老版本存着 auto:false，第一次升级时替 TA 打开自动同步，之后照用户的开关走
+    if (!c.autoSeeded) { c.autoSeeded = true; if (c.token && c.gist) c.auto = true; }
     return c;
+  }
+
+  /* 令牌失效时悄悄换回内置信箱，用户不会看到 401 */
+  function useBuiltinSync(c) {
+    const seed = parseInvite(BUILTIN_INVITE);
+    if (!seed || !seed.t) return false;
+    if (seed.t === c.token && seed.g === c.gist) return false;
+    c.token = seed.t;
+    if (seed.g) c.gist = seed.g;
+    if (seed.p) c.provider = seed.p;
+    save();
+    return true;
   }
 
   function syncStateText() {
@@ -1145,12 +1169,13 @@
     return `已连接 ${name}${auto} · 上次 ${d.getMonth() + 1} 月 ${d.getDate()} 日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  /* 太大就把照片剔掉，先保住文字 */
+  /* 太大就把照片剔掉，先保住文字；钥匙本身永远不写进云端 */
   function syncPayload() {
-    let text = JSON.stringify(state);
+    const clone = JSON.parse(JSON.stringify(state));
+    if (clone.config) delete clone.config.sync;
+    let text = JSON.stringify(clone);
     let stripped = false;
     if (text.length > 900000) {
-      const clone = JSON.parse(text);
       clone.moments = (clone.moments || []).map((m) => ({ ...m, img: '' }));
       text = JSON.stringify(clone);
       stripped = true;
@@ -1305,7 +1330,11 @@
       // 诊断：把这次真正用到的凭据打出来，省得靠猜
       log(`凭据：${c.provider} · 令牌 ${c.token.length} 位（${c.token.slice(0, 4)}…）· 同步码 ${String(c.gist).slice(0, 8)}…`);
       log('正在拉取…');
-      const r = await p.read(c.token, c.gist);
+      let r = await p.read(c.token, c.gist);
+      if (r.status === 401 && useBuiltinSync(c)) {
+        log('原来的令牌过期了，已自动换回内置信箱…');
+        r = await p.read(c.token, c.gist);
+      }
       if (!r.ok) {
         res.reason = `HTTP ${r.status} · ${httpHint(r.status)}`;
         log('拉取失败：' + res.reason);
