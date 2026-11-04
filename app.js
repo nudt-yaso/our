@@ -1058,25 +1058,36 @@
   /* ==================== 云端同步（GitHub Gist / Gitee） ==================== */
   const SYNC_FILE = 'shijiu-sync.json';
 
+  /* GitHub 认两种写法：token 和 Bearer。个别令牌只认后者，401 就换一种再试 */
+  async function ghFetch(url, token, opts) {
+    const o = opts || {};
+    const send = (scheme) => fetch(url, {
+      ...o,
+      headers: { ...(o.headers || {}), Authorization: scheme + ' ' + token, Accept: 'application/vnd.github+json' }
+    });
+    const first = await send('token');
+    if (first.status !== 401) return first;
+    const second = await send('Bearer');
+    return second;
+  }
+
   const SYNC_PROVIDERS = {
     github: {
       name: 'GitHub 私有 Gist',
       async create(token, payload) {
-        return fetch('https://api.github.com/gists', {
+        return ghFetch('https://api.github.com/gists', token, {
           method: 'POST',
-          headers: { Authorization: 'token ' + token, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ description: '拾玖·时光 · 同步空间', public: false, files: { [SYNC_FILE]: { content: payload } } })
         });
       },
       async read(token, id) {
-        return fetch('https://api.github.com/gists/' + encodeURIComponent(id), {
-          headers: { Authorization: 'token ' + token, Accept: 'application/vnd.github+json' }
-        });
+        return ghFetch('https://api.github.com/gists/' + encodeURIComponent(id), token, {});
       },
       async write(token, id, payload) {
-        return fetch('https://api.github.com/gists/' + encodeURIComponent(id), {
+        return ghFetch('https://api.github.com/gists/' + encodeURIComponent(id), token, {
           method: 'PATCH',
-          headers: { Authorization: 'token ' + token, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ files: { [SYNC_FILE]: { content: payload } } })
         });
       },
@@ -1417,6 +1428,7 @@
       <div class="sp-actions">
         <button class="btn btn-sm" id="sp-create" type="button">创建同步空间</button>
         <button class="btn btn-sm" id="sp-join" type="button">用邀请串加入</button>
+        <button class="btn btn-sm" id="sp-test" type="button">测试令牌</button>
         <button class="btn btn-sm" id="sp-invite" type="button">复制邀请串</button>
         <button class="btn btn-sm btn-primary" id="sp-sync" type="button">立即同步</button>
       </div>
@@ -1459,6 +1471,33 @@
         $('#sp-gist', root).value = syncCfg().gist;
       };
       $('#sp-sync', root).onclick = async () => { collect(); await syncNow(log); };
+
+      /* 只验令牌，不碰 Gist，用来区分「令牌不认」和「权限不够」 */
+      $('#sp-test', root).onclick = async () => {
+        collect();
+        const cc = syncCfg();
+        if (!cc.token) { log('先填令牌'); return; }
+        log(`—— 测试令牌（${cc.token.length} 位，${cc.token.slice(0, 4)}…）——`);
+        const hit = async (url, scheme) => {
+          try {
+            const r = await fetch(url, { headers: { Authorization: scheme + ' ' + cc.token, Accept: 'application/vnd.github+json' } });
+            return r.status;
+          } catch (e) { return 'ERR ' + (e.message || e); }
+        };
+        const u1 = await hit('https://api.github.com/user', 'token');
+        const u2 = u1 === 401 ? await hit('https://api.github.com/user', 'Bearer') : u1;
+        log(`/user  → token 写法 ${u1}${u2 !== u1 ? ' · Bearer 写法 ' + u2 : ''}`);
+        const okScheme = u2 === 200 ? (u2 === u1 ? 'token' : 'Bearer') : null;
+        if (!okScheme) {
+          log('结论：GitHub 不认这把令牌（已作废 / 已过期 / 复制不全）');
+          return;
+        }
+        const g = await hit('https://api.github.com/gists?per_page=1', okScheme);
+        log(`/gists → ${g}（写法 ${okScheme}）`);
+        if (g === 200) log('结论：令牌可用，直接点「创建同步空间」');
+        else if (g === 403 || g === 404) log('结论：令牌有效，但缺 gist 权限');
+        else log('结论：gist 接口返回 ' + g);
+      };
 
       $('#sp-auto', root).onclick = () => {
         collect();
