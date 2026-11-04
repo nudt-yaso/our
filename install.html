@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>装到手机上 · 拾玖时光</title>
+<meta name="theme-color" content="#eee4d3">
+<style>
+  :root{
+    --paper:#eee4d3; --paper2:#f6eee1; --ink:#3a3128; --ink2:#7a6a58;
+    --seal:#b7402b; --line:rgba(58,49,40,.14);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(120% 90% at 50% 0%, #fbf5ea 0%, var(--paper) 55%, #e6d9c4 100%);
+    color:var(--ink);
+    font-family:"Songti SC",Songti,SimSun,"Noto Serif CJK SC",serif;
+    display:flex; align-items:center; justify-content:center;
+    padding:28px 22px calc(28px + env(safe-area-inset-bottom));
+  }
+  .card{
+    width:100%; max-width:420px; text-align:center;
+    background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.16));
+    border:1px solid var(--line); border-radius:22px;
+    padding:30px 24px 26px;
+    box-shadow:0 18px 50px -28px rgba(58,49,40,.55), inset 0 0 0 1px rgba(255,255,255,.5);
+    position:relative;
+  }
+  .seal{
+    width:52px;height:52px;margin:0 auto 16px;border-radius:12px;
+    background:var(--seal); color:#fff5ec;
+    display:flex;align-items:center;justify-content:center;
+    font-size:19px;letter-spacing:1px;line-height:1.05;
+    box-shadow:0 10px 22px -12px rgba(183,64,43,.9);
+  }
+  h1{font-size:23px;font-weight:400;letter-spacing:.22em;margin:0 0 8px}
+  .sub{font-size:13px;color:var(--ink2);letter-spacing:.12em;margin:0 0 26px}
+  .btn{
+    display:block;text-decoration:none;
+    background:var(--seal);color:#fff6ee;
+    padding:17px 20px;border-radius:999px;
+    font-size:17px;letter-spacing:.2em;
+    box-shadow:0 16px 30px -16px rgba(183,64,43,.95);
+    transition:transform .12s ease;
+  }
+  .btn:active{transform:scale(.985);opacity:.94}
+  .alt{
+    display:block;margin-top:14px;font-size:13px;color:var(--ink2);
+    text-decoration:none;letter-spacing:.06em;border-bottom:1px solid var(--line);
+    padding-bottom:2px;
+  }
+  .note{
+    margin:24px 0 0;padding-top:18px;border-top:1px dashed var(--line);
+    font-size:12.5px;line-height:2;color:var(--ink2);text-align:left;
+  }
+  .note b{color:var(--ink);font-weight:400}
+  .ver{margin-top:14px;font-size:11px;color:var(--ink2);letter-spacing:.14em;opacity:.8}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="seal">拾玖</div>
+    <h1>装到手机上</h1>
+    <p class="sub">满屏版 · 没有网址栏</p>
+
+    <a class="btn" href="https://github.com/nudt-yaso/our/releases/download/v3.3.3/shijiu-love-apk">下 载 安 装 包</a>
+    <a class="alt" href="dl/shijiu-love.apk">下载不动？点这里（备用地址）</a>
+
+    <div class="note">
+      <b>怎么装：</b>点上面按钮 → 下载完点开 → 允许安装。<br>
+      <b>要不要卸载旧的：</b>不用。这是覆盖安装，<b>记录不会丢</b>。<br>
+      <b>装完记得：</b>打开一次，等几秒，它会自己把云端那份拿回来。<br>
+      <b>如果点了没反应：</b>把这一页用<b>手机浏览器</b>打开（微信里点不开安装包）。
+    </div>
+    <div class="ver">v3.3.3 · 2026.11</div>
+  </div>
+</body>
+</html>
