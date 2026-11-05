@@ -100,6 +100,7 @@
       bucketItems: [],
       checkins: {},
       qa: [],
+      deleted: {},
       seen: { banner: false }
     };
   }
@@ -123,6 +124,7 @@
         bucket: o.bucket && typeof o.bucket === 'object' ? o.bucket : {},
         bucketItems: Array.isArray(o.bucketItems) ? o.bucketItems : [],
         checkins: o.checkins && typeof o.checkins === 'object' ? o.checkins : {},
+        deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
         seen: { ...base.seen, ...(o.seen || {}) }
       };
       st.config.theme = normalizeTheme(st.config.theme);
@@ -585,6 +587,8 @@
 
   /* ==================== 拾光集 ==================== */
   let memFilter = 'all';
+  /* 每日一问里还没按「收下」的草稿：同步回来重画页面时用它兜住，别把刚打的字冲掉 */
+  let qaDraft = null;
 
   function renderMemories() {
     const box = $('#timeline');
@@ -789,11 +793,21 @@
     }
 
     // 每日一问
-    const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;    $('#q-day').textContent = `第 ${qIndex + 1} 问`;
+    const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;
+    $('#q-day').textContent = `第 ${qIndex + 1} 问`;
     $('#q-ask').textContent = D.QUESTIONS[qIndex];
     const tKey = ymd(new Date());
     const exist = state.qa.find((x) => x.date === tKey);
-    $('#q-answer').value = exist ? exist.a : '';
+    // 正在打字的草稿别被重渲染冲掉（同步回来会整天重画这一页）
+    const qaBox = $('#q-answer');
+    const draft = qaDraft;
+    if (document.activeElement === qaBox && qaBox.value.trim()) {
+      // 用户正在写，保持原样
+    } else if (draft && draft.date === tKey && draft.text.trim()) {
+      qaBox.value = draft.text;
+    } else {
+      qaBox.value = exist ? exist.a : '';
+    }
     $('#q-state').textContent = exist ? '今天已经答过了，可以再改。' : '答完会存进这里，只有我们能看到。';
 
     const hist = state.qa.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
@@ -966,6 +980,7 @@
       if (cur) {
         $('#bk-del', root).onclick = () => {
           if (!confirm('删掉这件小事？它的打勾记录也会一起没掉。')) return;
+          markDeleted('bucketItems', cur.id);
           state.bucketItems = state.bucketItems.filter((x) => x.id !== cur.id);
           delete state.bucket[cur.id];
           save(); closeModal(); renderBucket(); renderHome();
@@ -1047,6 +1062,14 @@
   }
 
   /* ==================== 设置 / 数据 ==================== */
+  /* 删掉的东西记一笔「墓碑」，不然下次同步又会被对方的云端数据顶回来 */
+  function markDeleted(kind, id) {
+    if (!id) return;
+    state.deleted = state.deleted || {};
+    state.deleted[kind] = state.deleted[kind] || {};
+    state.deleted[kind][id] = Date.now();
+  }
+
   /* 把对方传来的同步包并进来：只增不删，绝不覆盖本机已有记录 */
   function mergeState(incoming) {
     const stat = { added: 0, updated: 0, config: false };
@@ -1054,20 +1077,44 @@
     // 联网自检时混进云端的假记录，永远不再收进来
     const junk = (m) => !m || m.id === 'e2e1' || /端到端自检/.test(m.text || '');
 
+    // ① 先并「已经删掉」的清单（删了就到处都不许再活过来）
+    state.deleted = state.deleted || {};
+    const incDel = incoming.deleted || {};
+    Object.keys(incDel).forEach((kind) => {
+      const map = incDel[kind];
+      if (!map || typeof map !== 'object') return;
+      state.deleted[kind] = state.deleted[kind] || {};
+      Object.keys(map).forEach((id) => {
+        const mine = state.deleted[kind][id] || 0;
+        const other = map[id] || 0;
+        if (!mine || other > mine) state.deleted[kind][id] = other || Date.now();
+      });
+    });
+    const dead = (kind, id) => !!(state.deleted[kind] && state.deleted[kind][id]);
+
+    // ② 对方删掉的，本机也跟着摘掉
+    ['moments', 'anns', 'capsules', 'bucketItems'].forEach((kind) => {
+      const map = state.deleted[kind];
+      if (!map) return;
+      const before = (state[kind] || []).length;
+      state[kind] = (state[kind] || []).filter((x) => !(x && map[x.id]));
+      if (state[kind].length !== before) stat.updated++;
+    });
+
     (incoming.moments || []).forEach((m) => {
-      if (!m || !m.id || junk(m)) return;
+      if (!m || !m.id || junk(m) || dead('moments', m.id)) return;
       if (!has(state.moments, m.id)) { state.moments.push(m); stat.added++; }
     });
 
     (incoming.capsules || []).forEach((c) => {
-      if (!c || !c.id) return;
+      if (!c || !c.id || dead('capsules', c.id)) return;
       const mine = state.capsules.find((x) => x && x.id === c.id);
       if (!mine) { state.capsules.push(c); stat.added++; }
       else if (c.opened && !mine.opened) { mine.opened = true; stat.updated++; }
     });
 
     (incoming.anns || []).forEach((a) => {
-      if (!a || !a.id) return;
+      if (!a || !a.id || dead('anns', a.id)) return;
       if (has(state.anns, a.id)) return;
       // 同名同日期同重复方式的，算同一个纪念日，别再塞一条重复的进来
       const sig = [a.name, a.date, a.repeat].join('|');
@@ -1077,7 +1124,7 @@
 
     // 一百件小事：按 id 合并，本机勾过的「做过」不会被对方覆盖掉
     (incoming.bucketItems || []).forEach((it) => {
-      if (!it || !it.id) return;
+      if (!it || !it.id || dead('bucketItems', it.id)) return;
       const mine = (state.bucketItems || []).find((x) => x && x.id === it.id);
       if (!mine) { state.bucketItems.push(it); stat.added++; }
       else {
@@ -1884,7 +1931,18 @@
 
       $('#set-clear', root).onclick = () => {
         if (!confirm('真的要清空所有记录吗？这一步不可撤回。')) return;
+        // 先把每一条都记成「已删除」，否则同步一次又全回来了
+        ['moments', 'anns', 'capsules', 'bucketItems'].forEach((kind) => {
+          (state[kind] || []).forEach((x) => { if (x && x.id) markDeleted(kind, x.id); });
+        });
+        const keepSync = state.config.sync;
+        const keepSeen = { ...state.seen };
+        const keepDeleted = state.deleted || {};
         state = blankState();
+        state.config.sync = keepSync;      // 钥匙留着，不然云端空间就断了
+        state.seen = keepSeen;
+        state.deleted = keepDeleted;       // 墓碑要留着，不然同步又把清掉的东西还回来
+        state.config.me = $('#set-me', root) ? ($('#set-me', root).value.trim() || '我') : state.config.me;
         save(); closeModal(); renderAll(); setPageHero();
         toast('已经清空，从今天重新开始');
       };
@@ -2194,6 +2252,7 @@
       const del = e.target.closest('[data-del-ann]');
       if (del) {
         if (!confirm('删除这个纪念日？')) return;
+        markDeleted('anns', del.dataset.delAnn);
         state.anns = state.anns.filter((a) => a.id !== del.dataset.delAnn);
         save(); renderDays(); toast('已删除');
         return;
@@ -2218,6 +2277,7 @@
       }
       if (!del) return;
       if (!confirm('删掉这一条？')) return;
+      markDeleted('moments', del.dataset.delMem);
       state.moments = state.moments.filter((m) => m.id !== del.dataset.delMem);
       save(); renderAll(); toast('已删除');
     });
@@ -2238,23 +2298,48 @@
       const del = e.target.closest('[data-del-cap]');
       if (del) {
         if (!confirm('删除这封信？')) return;
+        markDeleted('capsules', del.dataset.delCap);
         state.capsules = state.capsules.filter((c) => c.id !== del.dataset.delCap);
         save(); renderCapsules(); renderHome(); toast('已删除');
       }
     });
 
     // 每日一问
-    $('#q-save').onclick = () => {
-      const a = $('#q-answer').value.trim();
-      if (!a) { toast('还没写呢'); return; }
+    /* 把今天的答案落盘；silent=true 时只存不重画（正在打字，别打断） */
+    const saveQaAnswer = (silent) => {
+      const box = $('#q-answer');
+      const a = box.value.trim();
+      if (!a) return false;
       const tKey = ymd(new Date());
       const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;
       const exist = state.qa.find((x) => x.date === tKey);
-      if (exist) { exist.a = a; exist.q = D.QUESTIONS[qIndex]; }
-      else state.qa.push({ id: uid(), date: tKey, q: D.QUESTIONS[qIndex], a });
-      save(); renderCapsules();
-      toast('收下了 · 今天的答案');
-      burstAt($('#q-save'));
+      if (exist) {
+        exist.a = a;
+        exist.q = D.QUESTIONS[qIndex];
+        if (!exist.by) exist.by = state.config.me || '';
+      } else {
+        state.qa.push({ id: uid(), date: tKey, q: D.QUESTIONS[qIndex], a, by: state.config.me || '' });
+      }
+      save();
+      if (!silent) { renderCapsules(); toast('收下了 · 今天的答案'); burstAt($('#q-save')); }
+      return true;
+    };
+
+    // 边写边存：哪怕忘了按「收下」，几秒后也已经进本地了
+    let qaTimer = null;
+    $('#q-answer').addEventListener('input', () => {
+      qaDraft = { date: ymd(new Date()), text: $('#q-answer').value };
+      clearTimeout(qaTimer);
+      qaTimer = setTimeout(() => saveQaAnswer(true), 700);
+    });
+    $('#q-answer').addEventListener('blur', () => {
+      clearTimeout(qaTimer);
+      saveQaAnswer(true);
+    });
+
+    $('#q-save').onclick = () => {
+      if (!saveQaAnswer(false)) { toast('还没写呢'); return; }
+      qaDraft = null;
     };
 
     // 小事
