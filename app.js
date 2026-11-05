@@ -181,6 +181,9 @@
             c.entries.push({ by: c.by || '', m: Number(c.m) || 0, n: c.n || '', at: 0, bySure: false });
           }
         }
+        c.entries.forEach((e) => {
+          if (e && e.bySure === undefined) e.bySure = !!e.at;   // 有真实时间戳的才敢信署名
+        });
         delete c.m; delete c.n; delete c.by;
       });
       return st;
@@ -1402,7 +1405,8 @@
           return;
         }
         // 本机有一条「署名不确定」的老记录，内容和对方这条一模一样 → 是同一条，改用对方的署名
-        const unsure = here.entries.find((x) => x.bySure === false && (x.n || '').trim() && (x.n || '') === (e.n || ''));
+        const unsure = here.entries.find((x) => (x.bySure === false || !x.at)
+          && (x.n || '').trim() && (x.n || '') === (e.n || ''));
         if (unsure) {
           unsure.by = e.by; unsure.bySure = true; unsure.at = e.at; unsure.m = e.m;
           stat.updated++;
