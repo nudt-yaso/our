@@ -576,6 +576,9 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
   border:1px solid var(--rule-hi); background:rgba(183,64,43,.05);
   vertical-align:1px; white-space:nowrap;
 }
+button.qa-who{ cursor:pointer; font-family:inherit; }
+button.qa-who:hover{ background:rgba(183,64,43,.12); }
+.qa-who.is-unsure{ border-style:dashed; color:var(--faint); }
 .qa-theirs-box{ margin:10px 0 0; padding:10px 12px; border-radius:10px; background:rgba(183,64,43,.045); border:1px dashed var(--rule-hi); }
 .qa-theirs{ font-size:13px; line-height:1.7; color:var(--ink); }
 .qa-theirs + .qa-theirs{ margin-top:6px; }
