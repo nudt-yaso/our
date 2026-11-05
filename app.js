@@ -2680,7 +2680,7 @@
       }
     });
 
-    // 手机上没有实体键盘，敲不出暗号：首页那个天数，连点五下也能掉出同一封
+    // 手机上没有实体键盘，敲不出暗号：首页那个天数，连点五下会问你要暗号，对了才掉出信
     let daysTaps = 0, daysTimer = null;
     const daysEl = $('#h-days');
     if (daysEl) {
@@ -2688,7 +2688,7 @@
         daysTaps++;
         clearTimeout(daysTimer);
         daysTimer = setTimeout(() => { daysTaps = 0; }, 2500);
-        if (daysTaps >= 5) { daysTaps = 0; showSecret(); }
+        if (daysTaps >= 5) { daysTaps = 0; openSecretLock(); }
       });
     }
 
@@ -2703,6 +2703,30 @@
         burst(window.innerWidth / 2, 120, '✨', 22);
         toast('10·19  23:45 —— 时间从此有了名字');
       }
+    });
+  }
+
+  /* 触摸入口先过暗号这一关：设了暗号就必须输对，不设就直接给 */
+  function openSecretLock() {
+    const sec = (state.config.secret || '').trim();
+    if (!sec) { showSecret(); return; }
+    openModal(`
+      <h3>说个暗号</h3>
+      <p class="modal-sub">知道的人，才有这封信。</p>
+      <div class="field"><input type="text" id="sec-input" maxlength="16" placeholder="暗号" autocomplete="off"></div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">算了</button>
+        <button class="btn btn-primary" id="sec-go" type="button">开门</button>
+      </div>
+    `, (root) => {
+      const box = $('#sec-input', root);
+      const go = () => {
+        if (box.value.trim() === sec) { closeModal(); setTimeout(showSecret, 160); }
+        else { toast('暗号不对哦'); box.value = ''; try { box.focus(); } catch (e) { } }
+      };
+      $('#sec-go', root).onclick = go;
+      box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      setTimeout(() => { try { box.focus(); } catch (e) { } }, 140);
     });
   }
 
