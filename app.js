@@ -100,6 +100,8 @@
       bucketItems: [],
       checkins: {},
       qa: [],
+      qaBank: [],
+      qaHidden: [],
       deleted: {},
       seen: { banner: false }
     };
@@ -124,6 +126,8 @@
         bucket: o.bucket && typeof o.bucket === 'object' ? o.bucket : {},
         bucketItems: Array.isArray(o.bucketItems) ? o.bucketItems : [],
         checkins: o.checkins && typeof o.checkins === 'object' ? o.checkins : {},
+        qaBank: Array.isArray(o.qaBank) ? o.qaBank : [],
+        qaHidden: Array.isArray(o.qaHidden) ? o.qaHidden : [],
         deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
         seen: { ...base.seen, ...(o.seen || {}) }
       };
@@ -159,6 +163,16 @@
           return true;
         });
       }
+      // 每日一问：老格式是一条一个答案，新格式是「一条题目，两个人各自的答案」
+      (st.qa || []).forEach((x) => {
+        if (!x || !x.date) return;
+        if (!Array.isArray(x.answers)) {
+          x.answers = [];
+          if ((x.a || '').trim()) x.answers.push({ by: x.by || '', a: x.a, at: 0 });
+        }
+        delete x.a;
+      });
+      st.qa = (st.qa || []).filter((x) => x && x.date);
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
@@ -748,6 +762,21 @@
   /* ==================== 时间胶囊 ==================== */
   let capsulePinged = false;
 
+  /* 每日一问的题库：内置的（可以藏起来）+ 自己加的 */
+  function qaBank() {
+    const hidden = new Set((state.qaHidden || []).map(Number));
+    const builtin = D.QUESTIONS.map((q, i) => ({ i, q, builtin: true })).filter((x) => !hidden.has(x.i));
+    const custom = (state.qaBank || []).filter((x) => x && x.text).map((x) => ({ i: x.id, q: x.text, builtin: false }));
+    return builtin.concat(custom);
+  }
+
+  function qaToday() {
+    let bank = qaBank();
+    if (!bank.length) bank = D.QUESTIONS.map((q, i) => ({ i, q, builtin: true }));
+    const idx = Math.abs(Math.floor(Date.now() / DAY)) % bank.length;
+    return { idx, q: bank[idx].q, no: idx + 1, total: bank.length };
+  }
+
   function renderCapsules() {
     const box = $('#capsule-list');
     if (!state.capsules.length) {
@@ -801,12 +830,16 @@
       }
     }
 
-    // 每日一问
-    const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;
-    $('#q-day').textContent = `第 ${qIndex + 1} 问`;
-    $('#q-ask').textContent = D.QUESTIONS[qIndex];
+    // 每日一问（题目来自题库：内置的 + 自己加的）
+    const q = qaToday();
+    $('#q-day').textContent = `第 ${q.no} 问 · 共 ${q.total}`;
+    $('#q-ask').textContent = q.q;
     const tKey = ymd(new Date());
     const exist = state.qa.find((x) => x.date === tKey);
+    const me = state.config.me || '我';
+    const mine = exist ? (exist.answers || []).find((a) => (a.by || '') === me) : null;
+    const theirs = exist ? (exist.answers || []).filter((a) => (a.by || '') !== me) : [];
+
     // 正在打字的草稿别被重渲染冲掉（同步回来会整天重画这一页）
     const qaBox = $('#q-answer');
     const draft = qaDraft;
@@ -815,17 +848,27 @@
     } else if (draft && draft.date === tKey && draft.text.trim()) {
       qaBox.value = draft.text;
     } else {
-      qaBox.value = exist ? exist.a : '';
+      qaBox.value = mine ? mine.a : '';
     }
-    $('#q-state').textContent = exist ? '今天已经答过了，可以再改。' : '答完会存进这里，只有我们能看到。';
+    $('#q-state').textContent = mine ? '你已经答过了，可以再改。' : '答完会存进这里，只有我们能看到。';
+
+    // 她那边的答案，也摆在下面
+    const otherBox = $('#q-other');
+    if (otherBox) {
+      otherBox.innerHTML = theirs.length
+        ? theirs.map((a) => `<div class="qa-theirs"><span class="qa-who">${esc(a.by || 'TA')}</span>${esc(a.a)}</div>`).join('')
+        : (exist ? '<div class="qa-theirs is-empty">等 TA 也答一句…</div>' : '');
+      otherBox.hidden = !otherBox.innerHTML;
+    }
 
     const hist = state.qa.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
-    $('#q-history').innerHTML = hist.length ? hist.map((x) => `
-      <div class="qa">
-        <div class="qa-q">${esc(x.q)}</div>
-        <div class="qa-a">${esc(x.a)}</div>
-        <div class="qa-t">${esc(x.date)}${x.by ? ' · ' + esc(x.by) + ' 答' : ''}</div>
-      </div>`).join('') : '';
+    $('#q-history').innerHTML = hist.length ? hist.map((x) => {
+      const rows = (x.answers || []).filter((a) => (a.a || '').trim());
+      const body = rows.length
+        ? rows.map((a) => `<div class="qa-a"><span class="qa-who">${esc(a.by || 'TA')}</span>${esc(a.a)}</div>`).join('')
+        : '<div class="qa-a is-empty">还没人答</div>';
+      return `<div class="qa"><div class="qa-q">${esc(x.q)}</div>${body}<div class="qa-t">${esc(x.date)}</div></div>`;
+    }).join('') : '';
   }
 
   function openCapsuleModal() {
@@ -1038,6 +1081,80 @@
     });
   }
 
+  /* 题库管理：内置的能藏，自建的能改能删，还能自己加 */
+  function openQaBankModal() {
+    const hidden = new Set((state.qaHidden || []).map(Number));
+    const builtinRows = D.QUESTIONS.map((q, i) => `
+      <div class="qk-row${hidden.has(i) ? ' is-off' : ''}">
+        <span class="qk-tag">内置</span>
+        <span class="qk-text">${esc(q)}</span>
+        <button class="qk-btn" data-qk-hide="${i}" type="button">${hidden.has(i) ? '放回' : '藏起来'}</button>
+      </div>`).join('');
+    const custom = (state.qaBank || []).filter((x) => x && x.text);
+    const customRows = custom.map((x) => `
+      <div class="qk-row">
+        <span class="qk-tag is-custom">自建</span>
+        <span class="qk-text">${esc(x.text)}</span>
+        <button class="qk-btn" data-qk-edit="${x.id}" type="button">改</button>
+        <button class="qk-btn is-danger" data-qk-del="${x.id}" type="button">删</button>
+      </div>`).join('');
+
+    openModal(`
+      <h3>每日一问的题目</h3>
+      <p class="modal-sub">现在一共 ${qaBank().length} 道在轮着出。内置的可以藏起来，也可以加你们自己的。</p>
+      <div class="qk-add">
+        <input type="text" id="qk-new" maxlength="40" placeholder="加一道你们自己的问题…">
+        <button class="btn btn-sm" id="qk-add-btn" type="button">加进去</button>
+      </div>
+      <div class="qk-list">
+        ${customRows ? `<div class="qk-sec">自己加的</div>${customRows}` : ''}
+        <div class="qk-sec">内置的 ${D.QUESTIONS.length} 道</div>
+        ${builtinRows}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" data-close="1" type="button">好了</button>
+      </div>
+    `, (root) => {
+      const addQ = (text) => {
+        const t = String(text || '').trim();
+        if (!t) { toast('写一句题目'); return; }
+        state.qaBank = state.qaBank || [];
+        state.qaBank.push({ id: uid(), text: t });
+        save(); closeModal(); setTimeout(openQaBankModal, 100); toast('加上了');
+      };
+      $('#qk-add-btn', root).onclick = () => addQ($('#qk-new', root).value);
+      $('#qk-new', root).addEventListener('keydown', (e) => { if (e.key === 'Enter') addQ($('#qk-new', root).value); });
+      $('.qk-list', root).addEventListener('click', (e) => {
+        const h = e.target.closest('[data-qk-hide]');
+        if (h) {
+          const i = Number(h.dataset.qkHide);
+          state.qaHidden = state.qaHidden || [];
+          const at = state.qaHidden.indexOf(i);
+          if (at >= 0) state.qaHidden.splice(at, 1); else state.qaHidden.push(i);
+          save(); closeModal(); setTimeout(openQaBankModal, 80);
+          return;
+        }
+        const ed = e.target.closest('[data-qk-edit]');
+        if (ed) {
+          const item = (state.qaBank || []).find((x) => x.id === ed.dataset.qkEdit);
+          if (!item) return;
+          const t = prompt('改一下这道题：', item.text);
+          if (t == null) return;
+          if (!t.trim()) { toast('不能是空的'); return; }
+          item.text = t.trim();
+          save(); closeModal(); setTimeout(openQaBankModal, 80); toast('改好了');
+          return;
+        }
+        const dl = e.target.closest('[data-qk-del]');
+        if (dl) {
+          if (!confirm('删掉这道自己加的题？')) return;
+          state.qaBank = (state.qaBank || []).filter((x) => x.id !== dl.dataset.qkDel);
+          save(); closeModal(); setTimeout(openQaBankModal, 80); toast('删掉了');
+        }
+      });
+    });
+  }
+
   /* ==================== 打卡 ==================== */
   function openCheckin() {
     const tKey = ymd(new Date());
@@ -1199,11 +1316,36 @@
       if (state.checkins[k] == null) { state.checkins[k] = incoming.checkins[k]; stat.added++; }
     });
 
-    // 每日一问按日期去重，本机答过的以本机为准
-    const dates = new Set(state.qa.map((x) => x && x.date));
+    // 每日一问：一条题目两个人各一份答案，按作者并起来
+    const qaByDate = new Map(state.qa.map((x) => [x && x.date, x]));
     (incoming.qa || []).forEach((x) => {
-      if (!x || !x.date || dates.has(x.date)) return;
-      state.qa.push(x); dates.add(x.date); stat.added++;
+      if (!x || !x.date) return;
+      const inc = (x.answers || []).filter((a) => a && (a.a || '').trim());
+      const mine = qaByDate.get(x.date);
+      if (!mine) {
+        state.qa.push({ id: x.id || uid(), date: x.date, q: x.q || '', answers: inc.slice() });
+        qaByDate.set(x.date, x);
+        stat.added++;
+        return;
+      }
+      if (!Array.isArray(mine.answers)) mine.answers = [];
+      if (!mine.q && x.q) mine.q = x.q;
+      inc.forEach((a) => {
+        const same = mine.answers.find((b) => (b.by || '') === (a.by || ''));
+        if (!same) { mine.answers.push(a); stat.added++; }
+        else if ((a.at || 0) > (same.at || 0)) { same.a = a.a; same.at = a.at; stat.updated++; }
+      });
+    });
+
+    // 自定义题目（按 id 并；同一条不重复）
+    (incoming.qaBank || []).forEach((b) => {
+      if (!b || !b.id || !(b.text || '').trim()) return;
+      if (!(state.qaBank || []).some((x) => x && x.id === b.id)) { state.qaBank.push(b); stat.added++; }
+    });
+    // 藏起来的题目：并起来（谁藏都算藏）
+    (incoming.qaHidden || []).forEach((i) => {
+      const n = Number(i);
+      if (!Number.isNaN(n) && state.qaHidden.indexOf(n) === -1) { state.qaHidden.push(n); stat.updated++; }
     });
 
     // 本机还是默认值时才采用对方的称呼和起点，避免互相改花
@@ -1856,6 +1998,10 @@
         <button class="btn btn-sm" id="set-sync" type="button">配置</button>
       </div>
       <div class="set-row">
+        <div class="set-label"><b>每日一问的题目</b><span>现在轮 ${qaBank().length} 道 · 可以自己加，也可以把内置的藏起来</span></div>
+        <button class="btn btn-sm" id="set-qbank" type="button">管理</button>
+      </div>
+      <div class="set-row">
         <div class="set-label"><b>导出同步包</b><span>一个 JSON 文件，发给她，或带到新手机</span></div>
         <button class="btn btn-sm" id="set-export" type="button">导出</button>
       </div>
@@ -1903,6 +2049,7 @@
       });
 
       $('#set-sync', root).onclick = () => { closeModal(); setTimeout(openSyncModal, 120); };
+      $('#set-qbank', root).onclick = () => { closeModal(); setTimeout(openQaBankModal, 120); };
 
       $('#set-install', root).onclick = () => {
         if (location.protocol === 'file:') {
@@ -2366,21 +2513,21 @@
     });
 
     // 每日一问
-    /* 把今天的答案落盘；silent=true 时只存不重画（正在打字，别打断） */
+    /* 把今天我这边的答案写进这条题目里（对方的答案原样留着） */
     const saveQaAnswer = (silent) => {
-      const box = $('#q-answer');
-      const a = box.value.trim();
+      const boxEl = $('#q-answer');
+      const a = boxEl.value.trim();
       if (!a) return false;
       const tKey = ymd(new Date());
-      const qIndex = Math.abs(Math.floor(Date.now() / DAY)) % D.QUESTIONS.length;
-      const exist = state.qa.find((x) => x.date === tKey);
-      if (exist) {
-        exist.a = a;
-        exist.q = D.QUESTIONS[qIndex];
-        if (!exist.by) exist.by = state.config.me || '';
-      } else {
-        state.qa.push({ id: uid(), date: tKey, q: D.QUESTIONS[qIndex], a, by: state.config.me || '' });
-      }
+      const qq = qaToday();
+      let entry = state.qa.find((x) => x.date === tKey);
+      if (!entry) { entry = { id: uid(), date: tKey, q: qq.q, answers: [] }; state.qa.push(entry); }
+      if (!entry.q) entry.q = qq.q;
+      if (!Array.isArray(entry.answers)) entry.answers = [];
+      const me = state.config.me || '我';
+      const mineAns = entry.answers.find((x) => (x.by || '') === me);
+      if (mineAns) { mineAns.a = a; mineAns.at = Date.now(); }
+      else entry.answers.push({ by: me, a, at: Date.now() });
       save();
       if (!silent) { renderCapsules(); toast('收下了 · 今天的答案'); burstAt($('#q-save')); }
       return true;
