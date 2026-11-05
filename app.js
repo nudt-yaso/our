@@ -166,6 +166,12 @@
         if (!Array.isArray(x.answers)) {
           x.answers = [];
           if ((x.a || '').trim()) x.answers.push({ by: x.by || '', a: x.a, at: 0 });
+        } else if ((x.a || '').trim()) {
+          // 旧版本又在这条新格式记录上写了 a：并进答案里，别丢
+          const by = x.by || st.config.me || '我';
+          const found = x.answers.find((z) => (z.by || '') === by);
+          if (found) { if (!(found.a || '').trim()) found.a = x.a; }
+          else x.answers.push({ by, a: x.a, at: x.at || 0 });
         }
         delete x.a;
       });
@@ -645,6 +651,7 @@
   let memFilter = 'all';
   /* 每日一问里还没按「收下」的草稿：同步回来重画页面时用它兜住，别把刚打的字冲掉 */
   let qaDraft = null;
+  let nameWarned = false;
 
   function renderMemories() {
     const box = $('#timeline');
@@ -1420,7 +1427,10 @@
     const qaByDate = new Map(state.qa.map((x) => [x && x.date, x]));
     (incoming.qa || []).forEach((x) => {
       if (!x || !x.date) return;
-      const inc = (x.answers || []).filter((a) => a && (a.a || '').trim());
+      let inc = (x.answers || []).filter((a) => a && (a.a || '').trim());
+      // 对方还是旧版本，写的是 {a, by}：也认
+      if (!inc.length && (x.a || '').trim()) inc = [{ by: x.by || '', a: x.a, at: x.at || 0 }];
+      if (!inc.length) return;
       const mine = qaByDate.get(x.date);
       if (!mine) {
         state.qa.push({ id: x.id || uid(), date: x.date, q: x.q || '', answers: inc.slice() });
@@ -2620,6 +2630,12 @@
       const boxEl = $('#q-answer');
       const a = boxEl.value.trim();
       if (!a) return false;
+      // 两个人的称呼撞了的话，答案会互相顶掉：提醒一次，但照样存下来
+      const meWarn = state.config.me || '我';
+      if (meWarn && state.config.you && meWarn === state.config.you && !nameWarned) {
+        nameWarned = true;
+        toast('你和 TA 的称呼一样，会分不清谁写的，去「设置」改一下');
+      }
       const tKey = ymd(new Date());
       const qq = qaToday();
       let entry = state.qa.find((x) => x.date === tKey);
