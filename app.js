@@ -173,6 +173,18 @@
         delete x.a;
       });
       st.qa = (st.qa || []).filter((x) => x && x.date);
+      // 打卡：老格式是一天一个人，新格式是一天里两个人各一份
+      Object.keys(st.checkins || {}).forEach((k) => {
+        const c = st.checkins[k];
+        if (!c || typeof c !== 'object') { delete st.checkins[k]; return; }
+        if (!Array.isArray(c.entries)) {
+          c.entries = [];
+          if (c.m != null || (c.n || '').trim() || c.by) {
+            c.entries.push({ by: c.by || st.config.me || '我', m: Number(c.m) || 0, n: c.n || '', at: 0 });
+          }
+        }
+        delete c.m; delete c.n; delete c.by;
+      });
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
@@ -398,23 +410,33 @@
     // 情话
     if (!$('#h-quote').dataset.pinned) setQuote(quoteOfToday());
 
-    // 打卡状态
+    // 打卡状态（一天里两个人可以各打各的）
     const tKey = ymd(new Date());
-    const done = !!state.checkins[tKey];
+    const mineCk = ckMine(tKey);
+    const theirCk = ckTheirs(tKey);
+    const done = !!(mineCk || theirCk.length);
     const tile = $('#h-checkin');
     tile.classList.toggle('is-done', done);
-    // 打过卡，就在首页钤一枚「今日已记」
+    // 我打过卡，就在首页钤一枚「今日已记」
     const heroCard = document.querySelector('.hero');
-    if (heroCard) heroCard.classList.toggle('is-stamped', done);
-    $('#h-checkin-t').textContent = done ? '今天已打卡' : '今日打卡';
-    if (done) {
-      const c = state.checkins[tKey] || {};
-      const m = D.MOODS[Number(c.m) || 0] || D.MOODS[0];
-      const note = (c.n || '').trim();
+    if (heroCard) heroCard.classList.toggle('is-stamped', !!mineCk);
+    const moodOf = (e) => (D.MOODS[Number(e && e.m) || 0] || D.MOODS[0]);
+    if (mineCk && theirCk.length) {
+      $('#h-checkin-t').textContent = '两个人都打了';
+      const mineTxt = (mineCk.n || '').trim() || moodOf(mineCk).k;
+      $('#h-checkin-s').textContent = `连续 ${streak()} 天 · 我：${mineTxt}`;
+    } else if (mineCk) {
+      $('#h-checkin-t').textContent = '我打了 · 等 TA';
+      const note = (mineCk.n || '').trim();
       $('#h-checkin-s').textContent = note
-        ? `连续 ${streak()} 天 · ${m.e} ${note}`
-        : `连续 ${streak()} 天 · ${m.e} ${m.k} · 点开看看`;
+        ? `连续 ${streak()} 天 · ${moodOf(mineCk).e} ${note}`
+        : `连续 ${streak()} 天 · ${moodOf(mineCk).e} ${moodOf(mineCk).k}`;
+    } else if (theirCk.length) {
+      const e = theirCk[0];
+      $('#h-checkin-t').textContent = `${e.by || 'TA'} 打了`;
+      $('#h-checkin-s').textContent = `连续 ${streak()} 天 · 该你了`;
     } else {
+      $('#h-checkin-t').textContent = '今日打卡';
       $('#h-checkin-s').textContent = `连续 ${streak()} 天，别断哦`;
     }
 
@@ -456,12 +478,22 @@
   const WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
   const weekday = (d) => WEEK[d.getDay()];
 
+  /* 一天的打卡里可以有两个人，各自一份：{ entries: [{by, m, n, at}] } */
+  const ckWho = () => state.config.me || '我';
+  function ckEntries(date) {
+    const c = state.checkins[date];
+    if (!c || !Array.isArray(c.entries)) return [];
+    return c.entries.filter((e) => e && (e.by || e.n || e.m != null));
+  }
+  const ckMine = (date) => ckEntries(date).find((e) => (e.by || '') === ckWho()) || null;
+  const ckTheirs = (date) => ckEntries(date).filter((e) => (e.by || '') !== ckWho());
+
   function streak() {
     let n = 0;
     const d = today0();
-    // 今天没打卡就从昨天开始数
-    if (!state.checkins[ymd(d)]) d.setDate(d.getDate() - 1);
-    while (state.checkins[ymd(d)]) { n++; d.setDate(d.getDate() - 1); }
+    // 今天还没人打卡就从昨天开始数；谁打都算这天没断
+    if (!ckEntries(ymd(d)).length) d.setDate(d.getDate() - 1);
+    while (ckEntries(ymd(d)).length) { n++; d.setDate(d.getDate() - 1); }
     return n;
   }
 
@@ -1158,49 +1190,72 @@
   /* ==================== 打卡 ==================== */
   function openCheckin() {
     const tKey = ymd(new Date());
-    const old = state.checkins[tKey] || null;
-    const mi0 = old ? (Number(old.m) || 0) : 0;
-    const note0 = old ? (old.n || '') : '';
+    const mineOld = ckMine(tKey);
+    const theirs = ckTheirs(tKey);
+    const mi0 = mineOld ? (Number(mineOld.m) || 0) : 0;
+    const note0 = mineOld ? (mineOld.n || '') : '';
+    const sub = mineOld
+      ? '你今天已经打过卡了，想改随时改。'
+      : (theirs.length
+        ? `${theirs.map((e) => e.by || 'TA').join('、')} 已经打了，你也来一句。`
+        : '打个卡，就算今天也认真喜欢过了。');
+    const theirLine = theirs.length
+      ? `<div class="ck-theirs">${theirs.map((e) => {
+        const m = D.MOODS[Number(e.m) || 0] || D.MOODS[0];
+        return `<div class="qa-theirs"><span class="qa-who">${esc(e.by || 'TA')}</span>${m.e} ${esc(e.n || m.k)}</div>`;
+      }).join('')}</div>`
+      : '';
     openModal(`
       <h3>今天的心情是</h3>
-      <p class="modal-sub">${old ? '已经打过卡了，想改随时改。' : '打个卡，就算今天也认真喜欢过了。'}</p>
+      <p class="modal-sub">${sub}</p>
       <div class="field">${moodPicker(mi0)}</div>
       <div class="field">
         <label>想说一句（可选）</label>
         <input type="text" id="ck-note" maxlength="30" placeholder="今天也很好" value="${esc(note0)}">
       </div>
+      ${theirLine}
       <div class="modal-actions">
         <button class="btn" data-close="1" type="button">取消</button>
-        <button class="btn btn-primary" id="ck-save" type="button">${old ? '改好了' : '存入今天'}</button>
+        <button class="btn btn-primary" id="ck-save" type="button">${mineOld ? '改好了' : '存入今天'}</button>
       </div>
     `, (root) => {
       const getMood = bindMoodPicker(root, mi0);
       $('#ck-save', root).onclick = () => {
         const mi = getMood();
         const note = $('#ck-note', root).value.trim();
-        state.checkins[tKey] = { m: mi, n: note, by: (old && old.by) || state.config.me || '' };
+        const date = ymd(new Date());
+        const box = state.checkins[date] || { entries: [] };
+        if (!Array.isArray(box.entries)) box.entries = [];
+        const me = ckWho();
+        const idx = box.entries.findIndex((e) => (e.by || '') === me);
+        const rec = { by: me, m: mi, n: note, at: Date.now() };
+        if (idx >= 0) box.entries[idx] = rec;
+        else box.entries.push(rec);
+        state.checkins[date] = box;
         save(); closeModal(); renderAll();
-        toast(old ? '改好了 · 今天这句' : `连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次心动`);
-        if (!old) burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
+        toast(mineOld ? '改好了 · 今天这句' : `连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次打卡`);
+        if (!mineOld) burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
       };
     });
   }
 
-  /* 打卡记录：写进去的那句话都在这儿，一天一行 */
+  /* 打卡记录：一天一行，两个人各自那句都在 */
   function openCheckinList() {
     const all = state.checkins || {};
-    const days = Object.keys(all).filter((k) => all[k]).sort((a, b) => b.localeCompare(a));
+    const days = Object.keys(all).filter((k) => all[k] && ckEntries(k).length).sort((a, b) => b.localeCompare(a));
     const tKey = ymd(new Date());
     const rows = days.map((k) => {
-      const c = all[k] || {};
-      const m = D.MOODS[Number(c.m) || 0] || D.MOODS[0];
       const d = parseDT(k);
+      const list = ckEntries(k).map((e) => {
+        const m = D.MOODS[Number(e.m) || 0] || D.MOODS[0];
+        return `<div class="ck-p"><span class="qa-who">${esc(e.by || 'TA')}</span><span class="ck-mood">${m.e}</span><span class="ck-note">${e.n ? esc(e.n) : `<i class="ck-none">没写什么 · ${esc(m.k)}</i>`}</span></div>`;
+      }).join('');
       return `<div class="ck-row">
-        <span class="ck-date">${d.getMonth() + 1} 月 ${d.getDate()} 日</span>
-        <span class="ck-mood" title="${esc(m.k)}">${m.e}</span>
-        <span class="ck-note">${c.n ? esc(c.n) : '<i class="ck-none">没写什么</i>'}</span>
-        ${c.by ? `<span class="ck-by">${esc(c.by)}</span>` : ''}
-        <button class="ck-del" data-ck-del="${k}" type="button" title="删掉这条">×</button>
+        <div class="ck-head">
+          <span class="ck-date">${d.getMonth() + 1} 月 ${d.getDate()} 日</span>
+          <button class="ck-del" data-ck-del="${k}" type="button" title="删掉这一天">×</button>
+        </div>
+        ${list}
       </div>`;
     }).join('');
 
@@ -1210,7 +1265,7 @@
       <div class="ck-list">${rows || '<div class="ck-empty">还没打过卡，今天来一次？</div>'}</div>
       <div class="modal-actions">
         <button class="btn" data-close="1" type="button">关闭</button>
-        <button class="btn btn-primary" id="ck-edit-today" type="button">${all[tKey] ? '改今天这句' : '今天打卡'}</button>
+        <button class="btn btn-primary" id="ck-edit-today" type="button">${ckMine(tKey) ? '改我今天这句' : '我今天打卡'}</button>
       </div>
     `, (root) => {
       $('#ck-edit-today', root).onclick = () => { closeModal(); setTimeout(openCheckin, 120); };
@@ -1313,7 +1368,17 @@
 
     Object.keys(incoming.checkins || {}).forEach((k) => {
       if (dead('checkins', k)) return;
-      if (state.checkins[k] == null) { state.checkins[k] = incoming.checkins[k]; stat.added++; }
+      const inc = incoming.checkins[k];
+      if (!inc || !Array.isArray(inc.entries)) return;
+      const here = state.checkins[k];
+      if (!here) { state.checkins[k] = { entries: inc.entries.slice() }; stat.added++; return; }
+      if (!Array.isArray(here.entries)) here.entries = [];
+      inc.entries.forEach((e) => {
+        if (!e) return;
+        const same = here.entries.find((x) => (x.by || '') === (e.by || ''));
+        if (!same) { here.entries.push(e); stat.added++; }
+        else if ((e.at || 0) > (same.at || 0)) { same.m = e.m; same.n = e.n; same.at = e.at; stat.updated++; }
+      });
     });
 
     // 每日一问：一条题目两个人各一份答案，按作者并起来
@@ -2140,6 +2205,7 @@
         ['moments', 'anns', 'capsules', 'bucketItems'].forEach((kind) => {
           (state[kind] || []).forEach((x) => { if (x && x.id) markDeleted(kind, x.id); });
         });
+        Object.keys(state.checkins || {}).forEach((k) => markDeleted('checkins', k));
         const keepSync = state.config.sync;
         const keepSeen = { ...state.seen };
         const keepDeleted = state.deleted || {};
@@ -2440,7 +2506,8 @@
     // 首页
     $('#h-add').onclick = () => openMomentModal('heart');
     $('#h-checkin').onclick = () => {
-      if (state.checkins[ymd(new Date())]) openCheckinList();
+      // 我打过卡了 → 先看记录；我还没打 → 直接给我打
+      if (ckMine(ymd(new Date()))) openCheckinList();
       else openCheckin();
     };
     $('#h-quote-next').onclick = () => {
