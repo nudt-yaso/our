@@ -393,7 +393,16 @@
     const heroCard = document.querySelector('.hero');
     if (heroCard) heroCard.classList.toggle('is-stamped', done);
     $('#h-checkin-t').textContent = done ? '今天已打卡' : '今日打卡';
-    $('#h-checkin-s').textContent = done ? `连续 ${streak()} 天` : `连续 ${streak()} 天，别断哦`;
+    if (done) {
+      const c = state.checkins[tKey] || {};
+      const m = D.MOODS[Number(c.m) || 0] || D.MOODS[0];
+      const note = (c.n || '').trim();
+      $('#h-checkin-s').textContent = note
+        ? `连续 ${streak()} 天 · ${m.e} ${note}`
+        : `连续 ${streak()} 天 · ${m.e} ${m.k} · 点开看看`;
+    } else {
+      $('#h-checkin-s').textContent = `连续 ${streak()} 天，别断哦`;
+    }
 
     // 统计
     const hearts = state.moments.filter((x) => x.kind === 'heart').length;
@@ -1032,32 +1041,73 @@
   /* ==================== 打卡 ==================== */
   function openCheckin() {
     const tKey = ymd(new Date());
-    if (state.checkins[tKey] != null) {
-      toast(`今天已经打过卡啦，连续 ${streak()} 天 🔥`);
-      return;
-    }
+    const old = state.checkins[tKey] || null;
+    const mi0 = old ? (Number(old.m) || 0) : 0;
+    const note0 = old ? (old.n || '') : '';
     openModal(`
       <h3>今天的心情是</h3>
-      <p class="modal-sub">打个卡，就算今天也认真喜欢过了。</p>
-      <div class="field">${moodPicker(0)}</div>
+      <p class="modal-sub">${old ? '已经打过卡了，想改随时改。' : '打个卡，就算今天也认真喜欢过了。'}</p>
+      <div class="field">${moodPicker(mi0)}</div>
       <div class="field">
         <label>想说一句（可选）</label>
-        <input type="text" id="ck-note" maxlength="30" placeholder="今天也很好">
+        <input type="text" id="ck-note" maxlength="30" placeholder="今天也很好" value="${esc(note0)}">
       </div>
       <div class="modal-actions">
         <button class="btn" data-close="1" type="button">取消</button>
-        <button class="btn btn-primary" id="ck-save" type="button">存入今天</button>
+        <button class="btn btn-primary" id="ck-save" type="button">${old ? '改好了' : '存入今天'}</button>
       </div>
     `, (root) => {
-      const getMood = bindMoodPicker(root, 0);
+      const getMood = bindMoodPicker(root, mi0);
       $('#ck-save', root).onclick = () => {
         const mi = getMood();
         const note = $('#ck-note', root).value.trim();
-        state.checkins[tKey] = { m: mi, n: note, by: state.config.me || '' };
+        state.checkins[tKey] = { m: mi, n: note, by: (old && old.by) || state.config.me || '' };
         save(); closeModal(); renderAll();
-        toast(`连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次心动`);
-        burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
+        toast(old ? '改好了 · 今天这句' : `连续 ${streak()} 天 · 第 ${Object.keys(state.checkins).length} 次心动`);
+        if (!old) burst(window.innerWidth / 2, window.innerHeight * 0.55, '💗', 16);
       };
+    });
+  }
+
+  /* 打卡记录：写进去的那句话都在这儿，一天一行 */
+  function openCheckinList() {
+    const all = state.checkins || {};
+    const days = Object.keys(all).filter((k) => all[k]).sort((a, b) => b.localeCompare(a));
+    const tKey = ymd(new Date());
+    const rows = days.map((k) => {
+      const c = all[k] || {};
+      const m = D.MOODS[Number(c.m) || 0] || D.MOODS[0];
+      const d = parseDT(k);
+      return `<div class="ck-row">
+        <span class="ck-date">${d.getMonth() + 1} 月 ${d.getDate()} 日</span>
+        <span class="ck-mood" title="${esc(m.k)}">${m.e}</span>
+        <span class="ck-note">${c.n ? esc(c.n) : '<i class="ck-none">没写什么</i>'}</span>
+        ${c.by ? `<span class="ck-by">${esc(c.by)}</span>` : ''}
+        <button class="ck-del" data-ck-del="${k}" type="button" title="删掉这条">×</button>
+      </div>`;
+    }).join('');
+
+    openModal(`
+      <h3>打卡记录</h3>
+      <p class="modal-sub">一共 ${days.length} 天 · 现在连着 ${streak()} 天</p>
+      <div class="ck-list">${rows || '<div class="ck-empty">还没打过卡，今天来一次？</div>'}</div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">关闭</button>
+        <button class="btn btn-primary" id="ck-edit-today" type="button">${all[tKey] ? '改今天这句' : '今天打卡'}</button>
+      </div>
+    `, (root) => {
+      $('#ck-edit-today', root).onclick = () => { closeModal(); setTimeout(openCheckin, 120); };
+      $('.ck-list', root).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-ck-del]');
+        if (!b) return;
+        const k = b.dataset.ckDel;
+        if (!confirm('删掉这一天的打卡？')) return;
+        markDeleted('checkins', k);
+        delete all[k];
+        save(); renderHome();
+        closeModal(); setTimeout(openCheckinList, 120);
+        toast('已删除');
+      });
     });
   }
 
@@ -1137,7 +1187,15 @@
       if (state.bucket[k] == null) { state.bucket[k] = incoming.bucket[k]; stat.added++; }
     });
 
+    const deadCk = state.deleted.checkins;
+    if (deadCk) {
+      Object.keys(state.checkins || {}).forEach((k) => {
+        if (deadCk[k]) { delete state.checkins[k]; stat.updated++; }
+      });
+    }
+
     Object.keys(incoming.checkins || {}).forEach((k) => {
+      if (dead('checkins', k)) return;
       if (state.checkins[k] == null) { state.checkins[k] = incoming.checkins[k]; stat.added++; }
     });
 
@@ -2234,7 +2292,10 @@
 
     // 首页
     $('#h-add').onclick = () => openMomentModal('heart');
-    $('#h-checkin').onclick = openCheckin;
+    $('#h-checkin').onclick = () => {
+      if (state.checkins[ymd(new Date())]) openCheckinList();
+      else openCheckin();
+    };
     $('#h-quote-next').onclick = () => {
       const cur = $('#h-quote').textContent;
       let q = cur;
