@@ -568,6 +568,34 @@ html[data-theme="night"] .ring-fg{ filter:drop-shadow(0 0 5px color-mix(in srgb,
 .ck-del{ flex:none; border:0; background:none; color:var(--faint); font-size:15px; line-height:1; padding:2px 6px; cursor:pointer; border-radius:6px; }
 .ck-del:hover{ color:var(--vermilion); }
 .ck-empty{ color:var(--faint); font-size:13px; padding:22px 0; text-align:center; }
+
+/* 每日一问：两个人的答案 + 题库管理 */
+.qa-who{
+  display:inline-block; margin-right:7px; padding:1px 7px; border-radius:999px;
+  font-size:10.5px; letter-spacing:.04em; color:var(--vermilion);
+  border:1px solid var(--rule-hi); background:rgba(183,64,43,.05);
+  vertical-align:1px; white-space:nowrap;
+}
+.qa-theirs-box{ margin:10px 0 0; padding:10px 12px; border-radius:10px; background:rgba(183,64,43,.045); border:1px dashed var(--rule-hi); }
+.qa-theirs{ font-size:13px; line-height:1.7; color:var(--ink); }
+.qa-theirs + .qa-theirs{ margin-top:6px; }
+.qa-theirs.is-empty{ color:var(--faint); font-size:12px; }
+.qa-a.is-empty{ color:var(--faint); opacity:.7; }
+
+.qk-add{ display:flex; gap:8px; margin:10px 0 12px; }
+.qk-add input{ flex:1; min-width:0; padding:9px 12px; border-radius:10px; border:1px solid var(--rule); background:var(--paper); color:var(--ink); font-size:13px; }
+.qk-list{ max-height:46vh; overflow-y:auto; }
+.qk-sec{ font-size:11px; color:var(--faint); letter-spacing:.12em; margin:12px 0 4px; }
+.qk-row{ display:flex; align-items:baseline; gap:8px; padding:8px 2px; border-bottom:1px dashed var(--rule); font-size:13px; line-height:1.5; }
+.qk-row:last-child{ border-bottom:0; }
+.qk-row.is-off{ opacity:.42; }
+.qk-row.is-off .qk-text{ text-decoration:line-through; }
+.qk-tag{ flex:none; font-size:10px; padding:1px 6px; border-radius:6px; color:var(--faint); border:1px solid var(--rule); }
+.qk-tag.is-custom{ color:var(--vermilion); border-color:var(--rule-hi); }
+.qk-text{ flex:1; color:var(--ink); word-break:break-word; }
+.qk-btn{ flex:none; border:0; background:none; color:var(--faint); font-size:12px; padding:2px 4px; cursor:pointer; }
+.qk-btn:hover{ color:var(--vermilion); }
+.qk-btn.is-danger:hover{ color:#a32318; }
 .tile-rose{ color:var(--vermilion); }
 .tile-gold{ color:var(--gold); }
 .tile:hover{ transform:translateY(-2px); box-shadow:var(--shadow-lift); border-color:var(--rule-hi); }
