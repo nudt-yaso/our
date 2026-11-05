@@ -140,10 +140,7 @@
         if (who && who !== '我') {
           (st.moments || []).forEach((m) => { if (m && !m.by) m.by = who; });
           (st.qa || []).forEach((x) => { if (x && !x.by) x.by = who; });
-          Object.keys(st.checkins || {}).forEach((k) => {
-            const c = st.checkins[k];
-            if (c && typeof c === 'object' && !c.by) c.by = who;
-          });
+          // 打卡不补：一天里可能是对方写的，猜成自己反而更糟
         }
       }
       // 只有一次：我自己做联网自检时往云端写过一条假心动，这里把它摘掉（tag 只匹配那一条）
@@ -180,7 +177,8 @@
         if (!Array.isArray(c.entries)) {
           c.entries = [];
           if (c.m != null || (c.n || '').trim() || c.by) {
-            c.entries.push({ by: c.by || st.config.me || '我', m: Number(c.m) || 0, n: c.n || '', at: 0 });
+            // 老记录没存「谁写的」的时间戳，署名是猜的，标成不确定，界面上给个问号，能手动改
+            c.entries.push({ by: c.by || '', m: Number(c.m) || 0, n: c.n || '', at: 0, bySure: false });
           }
         }
         delete c.m; delete c.n; delete c.by;
@@ -1228,7 +1226,7 @@
         if (!Array.isArray(box.entries)) box.entries = [];
         const me = ckWho();
         const idx = box.entries.findIndex((e) => (e.by || '') === me);
-        const rec = { by: me, m: mi, n: note, at: Date.now() };
+        const rec = { by: me, m: mi, n: note, at: Date.now(), bySure: true };
         if (idx >= 0) box.entries[idx] = rec;
         else box.entries.push(rec);
         state.checkins[date] = box;
@@ -1248,7 +1246,12 @@
       const d = parseDT(k);
       const list = ckEntries(k).map((e) => {
         const m = D.MOODS[Number(e.m) || 0] || D.MOODS[0];
-        return `<div class="ck-p"><span class="qa-who">${esc(e.by || 'TA')}</span><span class="ck-mood">${m.e}</span><span class="ck-note">${e.n ? esc(e.n) : `<i class="ck-none">没写什么 · ${esc(m.k)}</i>`}</span></div>`;
+        const sure = e.bySure !== false;
+        return `<div class="ck-p">
+          <button class="qa-who${sure ? '' : ' is-unsure'}" data-ck-who="${k}" data-ck-by="${esc(e.by || '')}" data-ck-at="${Number(e.at) || 0}" type="button" title="点一下可以改是谁写的">${esc(e.by || '不知道谁')}${sure ? '' : '？'}</button>
+          <span class="ck-mood">${m.e}</span>
+          <span class="ck-note">${e.n ? esc(e.n) : `<i class="ck-none">没写什么 · ${esc(m.k)}</i>`}</span>
+        </div>`;
       }).join('');
       return `<div class="ck-row">
         <div class="ck-head">
@@ -1270,6 +1273,22 @@
     `, (root) => {
       $('#ck-edit-today', root).onclick = () => { closeModal(); setTimeout(openCheckin, 120); };
       $('.ck-list', root).addEventListener('click', (e) => {
+        const who = e.target.closest('[data-ck-who]');
+        if (who) {
+          const date = who.dataset.ckWho;
+          const by = who.dataset.ckBy || '';
+          const at = Number(who.dataset.ckAt) || 0;
+          const box = state.checkins[date];
+          const rec = ((box && box.entries) || []).find((x) => (x.by || '') === by && (Number(x.at) || 0) === at);
+          if (!rec) return;
+          const other = (by === (state.config.me || '我')) ? (state.config.you || 'TA') : (state.config.me || '我');
+          if (!confirm(`这条是「${other}」写的吗？`)) return;
+          rec.by = other;
+          rec.bySure = true;
+          save(); closeModal(); setTimeout(openCheckinList, 80);
+          toast('署名改好了');
+          return;
+        }
         const b = e.target.closest('[data-ck-del]');
         if (!b) return;
         const k = b.dataset.ckDel;
@@ -1376,8 +1395,20 @@
       inc.entries.forEach((e) => {
         if (!e) return;
         const same = here.entries.find((x) => (x.by || '') === (e.by || ''));
-        if (!same) { here.entries.push(e); stat.added++; }
-        else if ((e.at || 0) > (same.at || 0)) { same.m = e.m; same.n = e.n; same.at = e.at; stat.updated++; }
+        if (same) {
+          if ((e.at || 0) > (same.at || 0) || same.bySure === false) {
+            same.m = e.m; same.n = e.n; same.at = e.at; same.bySure = true; stat.updated++;
+          }
+          return;
+        }
+        // 本机有一条「署名不确定」的老记录，内容和对方这条一模一样 → 是同一条，改用对方的署名
+        const unsure = here.entries.find((x) => x.bySure === false && (x.n || '').trim() && (x.n || '') === (e.n || ''));
+        if (unsure) {
+          unsure.by = e.by; unsure.bySure = true; unsure.at = e.at; unsure.m = e.m;
+          stat.updated++;
+          return;
+        }
+        here.entries.push(e); stat.added++;
       });
     });
 
