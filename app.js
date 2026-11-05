@@ -2680,6 +2680,18 @@
       }
     });
 
+    // 手机上没有实体键盘，敲不出暗号：首页那个天数，连点五下也能掉出同一封
+    let daysTaps = 0, daysTimer = null;
+    const daysEl = $('#h-days');
+    if (daysEl) {
+      daysEl.addEventListener('click', () => {
+        daysTaps++;
+        clearTimeout(daysTimer);
+        daysTimer = setTimeout(() => { daysTaps = 0; }, 2500);
+        if (daysTaps >= 5) { daysTaps = 0; showSecret(); }
+      });
+    }
+
     // 品牌长按彩蛋
     let brandClicks = 0, brandTimer = null;
     $('#brand').addEventListener('click', () => {
