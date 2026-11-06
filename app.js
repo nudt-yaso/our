@@ -195,24 +195,8 @@
         delete c.m; delete c.n; delete c.by;
       });
       // 题号漂移那阵子，她那句「喜欢西西堡撒娇…」被存进了「焦虑」那道题下。
-      // 这条规则每次都执行（幂等），哪怕别的设备又把旧数据推回来，打开一次就自动归位
-      {
-        const from = (st.qa || []).find((x) => x && x.date === '2026-11-06' && /焦虑/.test(x.q || ''));
-        if (from && Array.isArray(from.answers)) {
-          const hit = from.answers.filter((a) => (a.by || '') === '盐宝' && /喜欢西西堡撒娇/.test(a.a || ''));
-          if (hit.length) {
-            from.answers = from.answers.filter((a) => hit.indexOf(a) === -1);
-            const Q2 = '你最喜欢我们哪一个日常瞬间？';
-            let to = (st.qa || []).find((x) => x && x.date === '2026-11-06' && x.q === Q2);
-            if (!to) { to = { id: uid(), date: '2026-11-06', q: Q2, answers: [] }; st.qa.push(to); }
-            if (!Array.isArray(to.answers)) to.answers = [];
-            hit.forEach((a) => {
-              const same = to.answers.find((b) => (b.by || '') === a.by);
-              if (same) { same.a = a.a; same.at = a.at; } else to.answers.push(a);
-            });
-          }
-        }
-      }
+      // 加载后和每次合并后都跑一遍（幂等），谁把旧数据推回来都能自动归位
+      fixQaPlacement(st);
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
@@ -1402,6 +1386,29 @@
     state.deleted[kind][id] = Date.now();
   }
 
+  /* 把历史错位的答案挪回它真正回答的题下（幂等，加载 / 合并后都跑） */
+  function fixQaPlacement(st) {
+    if (!st || !Array.isArray(st.qa)) return st;
+    const from = st.qa.find((x) => x && x.date === '2026-11-06' && /焦虑/.test(x.q || ''));
+    if (!from || !Array.isArray(from.answers)) return st;
+    const hit = from.answers.filter((a) => (a.by || '') === '盐宝' && /喜欢西西堡撒娇/.test(a.a || ''));
+    if (!hit.length) return st;
+    from.answers = from.answers.filter((a) => hit.indexOf(a) === -1);
+    const Q2 = '你最喜欢我们哪一个日常瞬间？';
+    let to = st.qa.find((x) => x && x.date === '2026-11-06' && x.q === Q2);
+    if (!to) {
+      to = { id: uid(), date: '2026-11-06', q: Q2, answers: [] };
+      st.qa.push(to);
+    }
+    if (!Array.isArray(to.answers)) to.answers = [];
+    hit.forEach((a) => {
+      const same = to.answers.find((b) => (b.by || '') === a.by);
+      if (same) { same.a = a.a; same.at = a.at || same.at; }
+      else to.answers.push(a);
+    });
+    return st;
+  }
+
   /* 把对方传来的同步包并进来：只增不删，绝不覆盖本机已有记录 */
   function mergeState(incoming) {
     const stat = { added: 0, updated: 0, config: false };
@@ -1555,6 +1562,8 @@
     if (cfg.you && state.config.you === '你' && cfg.you !== '你') { state.config.you = cfg.you; stat.config = true; }
 
     state.seen.banner = true;
+    // 刚并进来的东西可能又带着旧错位，合并完再归位一次
+    fixQaPlacement(state);
     return stat;
   }
 
