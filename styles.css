@@ -1091,7 +1091,12 @@ button.qa-who:hover{ background:rgba(183,64,43,.12); }
 .qa{
   border-bottom:1px solid var(--rule);
   padding:13px 2px;
+  border-radius:8px;
+  transition:background .15s ease;
 }
+.qa[data-qa-open]{ cursor:pointer; }
+.qa[data-qa-open]:hover{ background:rgba(183,64,43,.045); }
+.qa[data-qa-open]:hover .qa-q{ color:var(--vermilion); }
 .qa-q{
   font-size:11px; color:var(--faint); letter-spacing:.04em;
   padding-left:12px; position:relative;
