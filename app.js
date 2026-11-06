@@ -1386,13 +1386,22 @@
     state.deleted[kind][id] = Date.now();
   }
 
-  /* 把历史错位的答案挪回它真正回答的题下（幂等，加载 / 合并后都跑） */
+  /* 把历史错位的答案挪回它真正回答的题下（幂等，加载 / 合并后都跑）
+     挪的时候顺手钉一个「这句不许再挂在这道题下」的记号，别的设备把它推回来也会被挡掉 */
+  function qaAnsKey(date, q, text) {
+    return [date || '', String(q || '').trim(), String(text || '').trim()].join('|');
+  }
   function fixQaPlacement(st) {
     if (!st || !Array.isArray(st.qa)) return st;
+    st.deleted = st.deleted || {};
+    st.deleted.qaAns = st.deleted.qaAns || {};
     const from = st.qa.find((x) => x && x.date === '2026-11-06' && /焦虑/.test(x.q || ''));
     if (!from || !Array.isArray(from.answers)) return st;
     const hit = from.answers.filter((a) => (a.by || '') === '盐宝' && /喜欢西西堡撒娇/.test(a.a || ''));
     if (!hit.length) return st;
+    hit.forEach((a) => {
+      st.deleted.qaAns[qaAnsKey(from.date, from.q, a.a)] = Date.now();
+    });
     from.answers = from.answers.filter((a) => hit.indexOf(a) === -1);
     const Q2 = '你最喜欢我们哪一个日常瞬间？';
     let to = st.qa.find((x) => x && x.date === '2026-11-06' && x.q === Q2);
@@ -1531,6 +1540,9 @@
       if (!Array.isArray(mine.answers)) mine.answers = [];
       if (!mine.q && x.q) mine.q = x.q;
       inc.forEach((a) => {
+        // 已经被钉掉的那句（挪走了就不会再回来），别接
+        const ban = state.deleted && state.deleted.qaAns;
+        if (ban && ban[qaAnsKey(x.date, x.q, a.a)]) return;
         const same = mine.answers.find((b) => (b.by || '') === (a.by || ''));
         if (!same) { mine.answers.push(a); stat.added++; }
         else if ((a.at || 0) > (same.at || 0)) { same.a = a.a; same.at = a.at; stat.updated++; }
