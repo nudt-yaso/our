@@ -102,6 +102,7 @@
       qa: [],
       qaBank: [],
       qaHidden: [],
+      qaPick: null,
       deleted: {},
       seen: { banner: false }
     };
@@ -128,6 +129,7 @@
         checkins: o.checkins && typeof o.checkins === 'object' ? o.checkins : {},
         qaBank: Array.isArray(o.qaBank) ? o.qaBank : [],
         qaHidden: Array.isArray(o.qaHidden) ? o.qaHidden : [],
+        qaPick: o.qaPick && typeof o.qaPick === 'object' ? o.qaPick : null,
         deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
         seen: { ...base.seen, ...(o.seen || {}) }
       };
@@ -811,11 +813,23 @@
   }
 
   function qaToday() {
+    const key = ymd(new Date());
     let bank = qaBank();
     if (!bank.length) bank = D.QUESTIONS.map((q, i) => ({ i, q, builtin: true }));
-    const idx = Math.abs(Math.floor(Date.now() / DAY)) % bank.length;
-    return { idx, q: bank[idx].q, no: idx + 1, total: bank.length };
+    // 当天第一次打开就把题定下来，之后再打开、再改题库都不换（不然一天会冒出两道题）
+    if (!state.qaPick || state.qaPick.date !== key) {
+      const localDays = Math.floor((dayStart(new Date()) - new Date(2000, 0, 1)) / DAY);
+      const pick = bank[Math.abs(localDays) % bank.length] || bank[0];
+      // 今天要是已经答过某道题，就沿用那道，别让答案对不上题
+      const answered = (state.qa || []).find((x) => x && x.date === key && (x.answers || []).some((a) => (a.a || '').trim()));
+      state.qaPick = { date: key, q: (answered && answered.q) || pick.q };
+    }
+    return { date: key, q: state.qaPick.q, no: state.qaPick.no || 0, total: bank.length };
   }
+
+  /* 同一天可以有好几道题：按「日期 + 题目」认，不按日期认 */
+  const qaKey = (x) => (x && x.date ? x.date : '') + '|' + String((x && x.q) || '').trim();
+  const qaEntry = (date, q) => (state.qa || []).find((x) => x && x.date === date && String(x.q || '').trim() === String(q || '').trim()) || null;
 
   function renderCapsules() {
     const box = $('#capsule-list');
@@ -870,12 +884,12 @@
       }
     }
 
-    // 每日一问（题目来自题库：内置的 + 自己加的）
+    // 每日一问（题目来自题库：内置的 + 自己加的；同一天可以有好几道）
     const q = qaToday();
-    $('#q-day').textContent = `第 ${q.no} 问 · 共 ${q.total}`;
+    const tKey = q.date;
+    $('#q-day').textContent = q.no ? `第 ${q.no} 问 · 共 ${q.total}` : `共 ${q.total} 道题`;
     $('#q-ask').textContent = q.q;
-    const tKey = ymd(new Date());
-    const exist = state.qa.find((x) => x.date === tKey);
+    const exist = qaEntry(tKey, q.q);
     const me = state.config.me || '我';
     const mine = exist ? (exist.answers || []).find((a) => (a.by || '') === me) : null;
     const theirs = exist ? (exist.answers || []).filter((a) => (a.by || '') !== me) : [];
@@ -885,7 +899,7 @@
     const draft = qaDraft;
     if (document.activeElement === qaBox && qaBox.value.trim()) {
       // 用户正在写，保持原样
-    } else if (draft && draft.date === tKey && draft.text.trim()) {
+    } else if (draft && draft.date === tKey && draft.q === q.q && draft.text.trim()) {
       qaBox.value = draft.text;
     } else {
       qaBox.value = mine ? mine.a : '';
@@ -901,14 +915,60 @@
       otherBox.hidden = !otherBox.innerHTML;
     }
 
-    const hist = state.qa.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+    // 历史：一天可以有好几道题，都能点开补答或改
+    const hist = state.qa.slice()
+      .filter((x) => x && x.date)
+      .sort((a, b) => (a.date === b.date ? String(a.q).localeCompare(String(b.q)) : b.date.localeCompare(a.date)))
+      .slice(0, 8);
     $('#q-history').innerHTML = hist.length ? hist.map((x) => {
       const rows = (x.answers || []).filter((a) => (a.a || '').trim());
+      const mineHere = rows.find((a) => (a.by || '') === me);
       const body = rows.length
         ? rows.map((a) => `<div class="qa-a"><span class="qa-who">${esc(a.by || 'TA')}</span>${esc(a.a)}</div>`).join('')
         : '<div class="qa-a is-empty">还没人答</div>';
-      return `<div class="qa"><div class="qa-q">${esc(x.q)}</div>${body}<div class="qa-t">${esc(x.date)}</div></div>`;
+      const tip = mineHere ? '点一下可以改我这句' : '点一下我来答';
+      return `<div class="qa" data-qa-open="1" data-qa-date="${esc(x.date)}" data-qa-q="${esc(x.q || '')}" title="${tip}">
+        <div class="qa-q">${esc(x.q)}</div>${body}
+        <div class="qa-t">${esc(x.date)}${mineHere ? '' : ' · ' + tip}</div>
+      </div>`;
     }).join('') : '';
+  }
+
+  /* 点历史里的任意一道题：补答 / 改自己的那句 */
+  function openQaEditor(date, question) {
+    const entry = qaEntry(date, question);
+    const me = state.config.me || '我';
+    const mine = entry ? (entry.answers || []).find((a) => (a.by || '') === me) : null;
+    const theirs = entry ? (entry.answers || []).filter((a) => (a.by || '') !== me && (a.a || '').trim()) : [];
+    openModal(`
+      <h3>${esc(question)}</h3>
+      <p class="modal-sub">${esc(date)}${theirs.length ? ' · TA 已经答了' : ''}</p>
+      ${theirs.length ? theirs.map((a) => `<div class="qa-theirs"><span class="qa-who">${esc(a.by || 'TA')}</span>${esc(a.a)}</div>`).join('') : ''}
+      <div class="field" style="margin-top:12px">
+        <label>${mine ? '改我这句' : '我来答'}</label>
+        <textarea id="qe-text" rows="4" maxlength="500" placeholder="写点什么…">${esc(mine ? mine.a : '')}</textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">取消</button>
+        <button class="btn btn-primary" id="qe-save" type="button">存下</button>
+      </div>
+    `, (root) => {
+      $('#qe-save', root).onclick = () => {
+        const a = $('#qe-text', root).value.trim();
+        if (!a) { toast('还没写呢'); return; }
+        let e = qaEntry(date, question);
+        if (!e) {
+          e = { id: uid(), date, q: question, answers: [] };
+          state.qa.push(e);
+        }
+        if (!Array.isArray(e.answers)) e.answers = [];
+        const found = e.answers.find((x) => (x.by || '') === me);
+        if (found) { found.a = a; found.at = Date.now(); }
+        else e.answers.push({ by: me, a, at: Date.now() });
+        save(); closeModal(); renderCapsules();
+        toast('收下了');
+      };
+    });
   }
 
   function openCapsuleModal() {
@@ -1423,18 +1483,20 @@
       });
     });
 
-    // 每日一问：一条题目两个人各一份答案，按作者并起来
-    const qaByDate = new Map(state.qa.map((x) => [x && x.date, x]));
+    // 每日一问：按「日期 + 题目」认（同一天可以有好几道），每道题下两个人各一份答案
+    const qaByKey = new Map(state.qa.filter((x) => x && x.date).map((x) => [qaKey(x), x]));
     (incoming.qa || []).forEach((x) => {
       if (!x || !x.date) return;
       let inc = (x.answers || []).filter((a) => a && (a.a || '').trim());
       // 对方还是旧版本，写的是 {a, by}：也认
       if (!inc.length && (x.a || '').trim()) inc = [{ by: x.by || '', a: x.a, at: x.at || 0 }];
       if (!inc.length) return;
-      const mine = qaByDate.get(x.date);
+      const k = qaKey(x);
+      const mine = qaByKey.get(k);
       if (!mine) {
-        state.qa.push({ id: x.id || uid(), date: x.date, q: x.q || '', answers: inc.slice() });
-        qaByDate.set(x.date, x);
+        const fresh = { id: x.id || uid(), date: x.date, q: x.q || '', answers: inc.slice() };
+        state.qa.push(fresh);
+        qaByKey.set(k, fresh);
         stat.added++;
         return;
       }
@@ -1446,6 +1508,11 @@
         else if ((a.at || 0) > (same.at || 0)) { same.a = a.a; same.at = a.at; stat.updated++; }
       });
     });
+
+    // 今天出哪道题：对方定过了就跟着对方，两边看到的题目才对得上
+    if (incoming.qaPick && incoming.qaPick.date && (!state.qaPick || state.qaPick.date !== incoming.qaPick.date)) {
+      state.qaPick = incoming.qaPick;
+    }
 
     // 自定义题目（按 id 并；同一条不重复）
     (incoming.qaBank || []).forEach((b) => {
@@ -2636,11 +2703,9 @@
         nameWarned = true;
         toast('你和 TA 的称呼一样，会分不清谁写的，去「设置」改一下');
       }
-      const tKey = ymd(new Date());
       const qq = qaToday();
-      let entry = state.qa.find((x) => x.date === tKey);
-      if (!entry) { entry = { id: uid(), date: tKey, q: qq.q, answers: [] }; state.qa.push(entry); }
-      if (!entry.q) entry.q = qq.q;
+      let entry = qaEntry(qq.date, qq.q);
+      if (!entry) { entry = { id: uid(), date: qq.date, q: qq.q, answers: [] }; state.qa.push(entry); }
       if (!Array.isArray(entry.answers)) entry.answers = [];
       const me = state.config.me || '我';
       const mineAns = entry.answers.find((x) => (x.by || '') === me);
@@ -2654,7 +2719,8 @@
     // 边写边存：哪怕忘了按「收下」，几秒后也已经进本地了
     let qaTimer = null;
     $('#q-answer').addEventListener('input', () => {
-      qaDraft = { date: ymd(new Date()), text: $('#q-answer').value };
+      const qq = qaToday();
+      qaDraft = { date: qq.date, q: qq.q, text: $('#q-answer').value };
       clearTimeout(qaTimer);
       qaTimer = setTimeout(() => saveQaAnswer(true), 700);
     });
@@ -2667,6 +2733,16 @@
       if (!saveQaAnswer(false)) { toast('还没写呢'); return; }
       qaDraft = null;
     };
+
+    // 点历史里的题目：补答或改我这句
+    const qHist = $('#q-history');
+    if (qHist) {
+      qHist.addEventListener('click', (e) => {
+        const card = e.target.closest('[data-qa-open]');
+        if (!card) return;
+        openQaEditor(card.dataset.qaDate, card.dataset.qaQ || '');
+      });
+    }
 
     // 小事
     $('#btn-random').onclick = randomPick;
