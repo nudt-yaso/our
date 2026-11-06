@@ -824,7 +824,9 @@
       const answered = (state.qa || []).find((x) => x && x.date === key && (x.answers || []).some((a) => (a.a || '').trim()));
       state.qaPick = { date: key, q: (answered && answered.q) || pick.q };
     }
-    return { date: key, q: state.qaPick.q, no: state.qaPick.no || 0, total: bank.length };
+    const qq = state.qaPick.q;
+    const at = bank.findIndex((b) => b.q === qq);
+    return { date: key, q: qq, no: at >= 0 ? at + 1 : 0, total: bank.length };
   }
 
   /* 同一天可以有好几道题：按「日期 + 题目」认，不按日期认 */
