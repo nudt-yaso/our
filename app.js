@@ -194,6 +194,25 @@
         });
         delete c.m; delete c.n; delete c.by;
       });
+      // 题号漂移那阵子，她那句「喜欢西西堡撒娇…」被存进了「焦虑」那道题下。
+      // 这条规则每次都执行（幂等），哪怕别的设备又把旧数据推回来，打开一次就自动归位
+      {
+        const from = (st.qa || []).find((x) => x && x.date === '2026-11-06' && /焦虑/.test(x.q || ''));
+        if (from && Array.isArray(from.answers)) {
+          const hit = from.answers.filter((a) => (a.by || '') === '盐宝' && /喜欢西西堡撒娇/.test(a.a || ''));
+          if (hit.length) {
+            from.answers = from.answers.filter((a) => hit.indexOf(a) === -1);
+            const Q2 = '你最喜欢我们哪一个日常瞬间？';
+            let to = (st.qa || []).find((x) => x && x.date === '2026-11-06' && x.q === Q2);
+            if (!to) { to = { id: uid(), date: '2026-11-06', q: Q2, answers: [] }; st.qa.push(to); }
+            if (!Array.isArray(to.answers)) to.answers = [];
+            hit.forEach((a) => {
+              const same = to.answers.find((b) => (b.by || '') === a.by);
+              if (same) { same.a = a.a; same.at = a.at; } else to.answers.push(a);
+            });
+          }
+        }
+      }
       return st;
     } catch (e) {
       console.warn('数据读取失败，已重置', e);
