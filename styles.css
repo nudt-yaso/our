@@ -1265,6 +1265,11 @@ button.qa-who:hover{ background:rgba(183,64,43,.12); }
   cursor:pointer; transition:.2s var(--ease);
 }
 .tl-act-btn span{ font-size:12.5px; line-height:1; }
+.ico-hug{ width:14px; height:14px; display:inline-block; vertical-align:-2px; flex:none; }
+/* 没「喜欢」时这颗心是灰的，点了才亮成朱砂红 */
+.tl-act-btn .like-ico{ font-size:13px; transition:filter .2s var(--ease), transform .2s var(--ease); }
+.tl-act-btn:not(.is-on) .like-ico{ filter:grayscale(1); opacity:.5; }
+.tl-act-btn.is-on .like-ico{ transform:scale(1.08); }
 .tl-act-btn:hover{ border-color:var(--rule-hi); color:var(--ink); background:rgba(183,64,43,.05); }
 .tl-act-btn:active{ transform:scale(.96); }
 .tl-act-btn.is-on{ border-color:var(--vermilion); color:var(--vermilion); background:rgba(183,64,43,.08); }
