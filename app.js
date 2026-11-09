@@ -2789,6 +2789,14 @@
       dot.hidden = !n;
       if (n) dot.textContent = n > 9 ? '9+' : String(n);
     });
+    // 顺带把数字挂到 App 图标上（支持的环境才有：Chrome 装的主屏幕 App、部分桌面浏览器）
+    try {
+      const total = Object.keys(byPage).reduce((s, k) => s + byPage[k], 0);
+      if (navigator.setAppBadge) {
+        if (total > 0) navigator.setAppBadge(total).catch(() => { });
+        else if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => { });
+      }
+    } catch (e) { /* 不支持就算了，不影响 App 内的小红点 */ }
   }
 
   function clearUnread(page) {
