@@ -715,7 +715,7 @@
               <span aria-hidden="true">💬</span>${cmts.length ? `回一句 · ${cmts.length}` : '回一句'}
             </button>
             <button class="tl-act-btn${hugged ? ' is-on' : ''}" data-hug="${x.id}" type="button">
-              <span aria-hidden="true">🫶</span>${hugList.length ? `抱抱 ${hugList.length}` : '抱抱'}
+              <span class="like-ico" aria-hidden="true">❤️</span>${hugList.length ? `喜欢 ${hugList.length}` : '喜欢'}
             </button>
           </div>
           <div class="tl-foot">
@@ -762,18 +762,18 @@
     });
   }
 
-  /* 抱抱：一人一下，再点一下取消 */
+  /* 喜欢：一人一下，再点一下取消 */
   function toggleHug(id) {
     const m = state.moments.find((x) => x && x.id === id);
     if (!m) return;
     m.hugs = Array.isArray(m.hugs) ? m.hugs : [];
     const me = state.config.me || '我';
     const at = m.hugs.findIndex((h) => (h.by || '') === me);
-    if (at >= 0) { m.hugs.splice(at, 1); toast('取消了'); }
+    if (at >= 0) { m.hugs.splice(at, 1); toast('收回了'); }
     else {
       m.hugs.push({ by: me, at: Date.now() });
-      burst(window.innerWidth / 2, window.innerHeight * 0.6, '🫶', 10);
-      toast('抱一下 🫶');
+      burst(window.innerWidth / 2, window.innerHeight * 0.6, '❤️', 10);
+      toast('喜欢 ❤️');
     }
     save(); renderMemories(); renderHome();
   }
