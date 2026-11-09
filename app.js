@@ -103,6 +103,7 @@
       qaBank: [],
       qaHidden: [],
       qaPick: null,
+      unread: {},
       deleted: {},
       seen: { banner: false }
     };
@@ -130,6 +131,7 @@
         qaBank: Array.isArray(o.qaBank) ? o.qaBank : [],
         qaHidden: Array.isArray(o.qaHidden) ? o.qaHidden : [],
         qaPick: o.qaPick && typeof o.qaPick === 'object' ? o.qaPick : null,
+        unread: o.unread && typeof o.unread === 'object' ? o.unread : {},
         deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
         seen: { ...base.seen, ...(o.seen || {}) }
       };
@@ -687,6 +689,16 @@
         const moodObj = D.MOODS[x.mood] || null;
         const d = parseDT(x.at);
         const title = x.kind === 'memory' ? (x.title || '无题') : '心动瞬间';
+        const me = state.config.me || '我';
+        const cmts = (x.cmts || []).filter((c) => c && (c.text || '').trim());
+        const hugList = (x.hugs || []).filter((h) => h && h.by);
+        const hugged = hugList.some((h) => (h.by || '') === me);
+        const showCmts = cmts.slice(-2);
+        const cmtHtml = cmts.length
+          ? `<div class="tl-cmts">${cmts.length > 2 ? `<div class="tl-cmt-more">还有 ${cmts.length - 2} 句</div>` : ''}
+              ${showCmts.map((c) => `<div class="tl-cmt"><span class="qa-who">${esc(c.by || 'TA')}</span><span class="tl-cmt-t">${esc(c.text)}</span></div>`).join('')}
+            </div>`
+          : '';
         return `<div class="tl-card ${x.kind === 'heart' ? 'is-heart' : ''}">
           <div class="tl-top">
             <span class="tl-emoji">${moodObj ? moodObj.e : (x.kind === 'memory' ? '📖' : '💗')}</span>
@@ -697,6 +709,15 @@
           </div>
           ${x.text ? `<div class="tl-text">${esc(x.text)}</div>` : ''}
           ${x.img ? `<img class="tl-img" src="${x.img}" alt="" loading="lazy" data-cap="${pad(d.getHours())}:${pad(d.getMinutes())} · ${esc(fmtMD(d))}">` : ''}
+          ${cmtHtml}
+          <div class="tl-act">
+            <button class="tl-act-btn" data-cmt="${x.id}" type="button">
+              <span aria-hidden="true">💬</span>${cmts.length ? `回一句 · ${cmts.length}` : '回一句'}
+            </button>
+            <button class="tl-act-btn${hugged ? ' is-on' : ''}" data-hug="${x.id}" type="button">
+              <span aria-hidden="true">🫶</span>${hugList.length ? `抱抱 ${hugList.length}` : '抱抱'}
+            </button>
+          </div>
           <div class="tl-foot">
             <span class="tl-day-num">${pad(d.getHours())}:${pad(d.getMinutes())}</span>
             <span>${x.kind === 'heart' ? '存入恋爱银行' : '收入拾光集'}</span>
@@ -705,6 +726,56 @@
       }).join('');
       return `<div class="tl-day"><div class="tl-day-label">${label}</div>${cards}</div>`;
     }).join('');
+  }
+
+  /* 在她写的那条下面回一句 */
+  function openCommentModal(id) {
+    const m = state.moments.find((x) => x && x.id === id);
+    if (!m) return;
+    const me = state.config.me || '我';
+    const cmts = (m.cmts || []).filter((c) => c && (c.text || '').trim()).sort((a, b) => (a.at || 0) - (b.at || 0));
+    openModal(`
+      <h3>回一句</h3>
+      <p class="modal-sub">${esc(String(m.text || m.title || '').slice(0, 30))}</p>
+      <div class="cmt-list">
+        ${cmts.length
+        ? cmts.map((c) => `<div class="cmt"><span class="qa-who">${esc(c.by || 'TA')}</span><span class="cmt-t">${esc(c.text)}</span></div>`).join('')
+        : '<div class="cmt-empty">这条下面还很安静，你先说一句。</div>'}
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>我说</label>
+        <textarea id="cmt-text" rows="3" maxlength="300" placeholder="嗯，我在听…"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-close="1" type="button">关闭</button>
+        <button class="btn btn-primary" id="cmt-save" type="button">发出去</button>
+      </div>
+    `, (root) => {
+      $('#cmt-save', root).onclick = () => {
+        const t = $('#cmt-text', root).value.trim();
+        if (!t) { toast('写点什么吧'); return; }
+        m.cmts = Array.isArray(m.cmts) ? m.cmts : [];
+        m.cmts.push({ by: me, text: t, at: Date.now() });
+        save(); closeModal(); renderAll();
+        toast('回好了 · 她那边会有小红点');
+      };
+    });
+  }
+
+  /* 抱抱：一人一下，再点一下取消 */
+  function toggleHug(id) {
+    const m = state.moments.find((x) => x && x.id === id);
+    if (!m) return;
+    m.hugs = Array.isArray(m.hugs) ? m.hugs : [];
+    const me = state.config.me || '我';
+    const at = m.hugs.findIndex((h) => (h.by || '') === me);
+    if (at >= 0) { m.hugs.splice(at, 1); toast('取消了'); }
+    else {
+      m.hugs.push({ by: me, at: Date.now() });
+      burst(window.innerWidth / 2, window.innerHeight * 0.6, '🫶', 10);
+      toast('抱一下 🫶');
+    }
+    save(); renderMemories(); renderHome();
   }
 
   function openMomentModal(kind) {
@@ -951,7 +1022,7 @@
       ${theirs.length ? theirs.map((a) => `<div class="qa-theirs"><span class="qa-who">${esc(a.by || 'TA')}</span>${esc(a.a)}</div>`).join('') : ''}
       <div class="field" style="margin-top:12px">
         <label>${mine ? '改我这句' : '我来答'}</label>
-        <textarea id="qe-text" rows="4" maxlength="500" placeholder="写点什么…">${esc(mine ? mine.a : '')}</textarea>
+        <textarea id="qe-text" rows="4" maxlength="2000" placeholder="写点什么…">${esc(mine ? mine.a : '')}</textarea>
       </div>
       <div class="modal-actions">
         <button class="btn" data-close="1" type="button">取消</button>
@@ -1121,7 +1192,7 @@
       <p class="modal-sub">${cur ? '改完之后，打勾的状态不会变。' : '越具体越容易真的去做。'}</p>
       <div class="field">
         <label>写什么</label>
-        <input type="text" id="bk-text" maxlength="60" value="${cur ? esc(cur.t) : ''}" placeholder="比如：一起去看一次海">
+        <input type="text" id="bk-text" maxlength="120" value="${cur ? esc(cur.t) : ''}" placeholder="比如：一起去看一次海">
       </div>
       <div class="field">
         <label>分类（可以空着，也可以自己起一个）</label>
@@ -1284,7 +1355,7 @@
       <div class="field">${moodPicker(mi0)}</div>
       <div class="field">
         <label>想说一句（可选）</label>
-        <input type="text" id="ck-note" maxlength="30" placeholder="今天也很好" value="${esc(note0)}">
+        <textarea id="ck-note" rows="2" maxlength="200" placeholder="今天也很好，想多写几句也行">${esc(note0)}</textarea>
       </div>
       ${theirLine}
       <div class="modal-actions">
@@ -1420,7 +1491,7 @@
 
   /* 把对方传来的同步包并进来：只增不删，绝不覆盖本机已有记录 */
   function mergeState(incoming) {
-    const stat = { added: 0, updated: 0, config: false };
+    const stat = { added: 0, updated: 0, config: false, newBy: {} };
     const has = (arr, id) => arr.some((x) => x && x.id === id);
     // 联网自检时混进云端的假记录，永远不再收进来
     const junk = (m) => !m || m.id === 'e2e1' || /端到端自检/.test(m.text || '');
@@ -1451,13 +1522,36 @@
 
     (incoming.moments || []).forEach((m) => {
       if (!m || !m.id || junk(m) || dead('moments', m.id)) return;
-      if (!has(state.moments, m.id)) { state.moments.push(m); stat.added++; }
+      const mine = state.moments.find((x) => x && x.id === m.id);
+      if (!mine) {
+        state.moments.push(m); stat.added++;
+        if (m.by && m.by !== (state.config.me || '')) stat.newBy.moments = (stat.newBy.moments || 0) + 1;
+      } else {
+        // 已有的那条：把她新写的评论并进来
+        if (!Array.isArray(mine.cmts)) mine.cmts = [];
+        (m.cmts || []).forEach((c) => {
+          if (!c || !(c.text || '').trim()) return;
+          const same = mine.cmts.find((z) => (z.by || '') === (c.by || '') && (z.text || '') === (c.text || ''));
+          if (!same) {
+            mine.cmts.push(c); stat.updated++;
+            if ((c.by || '') !== (state.config.me || '')) stat.newBy.moments = (stat.newBy.moments || 0) + 1;
+          }
+        });
+        if (!Array.isArray(mine.hugs)) mine.hugs = [];
+        (m.hugs || []).forEach((h) => {
+          if (!h || !(h.by || '')) return;
+          if (!mine.hugs.some((z) => (z.by || '') === (h.by || ''))) { mine.hugs.push(h); stat.updated++; }
+        });
+      }
     });
 
     (incoming.capsules || []).forEach((c) => {
       if (!c || !c.id || dead('capsules', c.id)) return;
       const mine = state.capsules.find((x) => x && x.id === c.id);
-      if (!mine) { state.capsules.push(c); stat.added++; }
+      if (!mine) {
+        state.capsules.push(c); stat.added++;
+        if (!c.by || c.by !== (state.config.me || '')) stat.newBy.capsules = (stat.newBy.capsules || 0) + 1;
+      }
       else if (c.opened && !mine.opened) { mine.opened = true; stat.updated++; }
     });
 
@@ -1474,7 +1568,10 @@
     (incoming.bucketItems || []).forEach((it) => {
       if (!it || !it.id || dead('bucketItems', it.id)) return;
       const mine = (state.bucketItems || []).find((x) => x && x.id === it.id);
-      if (!mine) { state.bucketItems.push(it); stat.added++; }
+      if (!mine) {
+        state.bucketItems.push(it); stat.added++;
+        if ((it.t || '').trim()) stat.newBy.bucket = (stat.newBy.bucket || 0) + 1;
+      }
       else {
         if (it.done && !mine.done) { mine.done = true; stat.updated++; }
         if (!mine.text && it.text) { mine.text = it.text; stat.updated++; }
@@ -1497,7 +1594,16 @@
       const inc = incoming.checkins[k];
       if (!inc || !Array.isArray(inc.entries)) return;
       const here = state.checkins[k];
-      if (!here) { state.checkins[k] = { entries: inc.entries.slice() }; stat.added++; return; }
+      if (!here) {
+        state.checkins[k] = { entries: inc.entries.slice() };
+        stat.added++;
+        inc.entries.forEach((e) => {
+          if (e && (e.by || '') !== (state.config.me || '') && (e.n || '').trim()) {
+            stat.newBy.checkins = (stat.newBy.checkins || 0) + 1;
+          }
+        });
+        return;
+      }
       if (!Array.isArray(here.entries)) here.entries = [];
       inc.entries.forEach((e) => {
         if (!e) return;
@@ -1517,6 +1623,9 @@
           return;
         }
         here.entries.push(e); stat.added++;
+        if ((e.by || '') !== (state.config.me || '') && (e.n || '').trim()) {
+          stat.newBy.checkins = (stat.newBy.checkins || 0) + 1;
+        }
       });
     });
 
@@ -1535,6 +1644,9 @@
         state.qa.push(fresh);
         qaByKey.set(k, fresh);
         stat.added++;
+        inc.forEach((a) => {
+          if ((a.by || '') !== (state.config.me || '')) stat.newBy.qa = (stat.newBy.qa || 0) + 1;
+        });
         return;
       }
       if (!Array.isArray(mine.answers)) mine.answers = [];
@@ -1544,7 +1656,10 @@
         const ban = state.deleted && state.deleted.qaAns;
         if (ban && ban[qaAnsKey(x.date, x.q, a.a)]) return;
         const same = mine.answers.find((b) => (b.by || '') === (a.by || ''));
-        if (!same) { mine.answers.push(a); stat.added++; }
+        if (!same) {
+          mine.answers.push(a); stat.added++;
+          if ((a.by || '') !== (state.config.me || '')) stat.newBy.qa = (stat.newBy.qa || 0) + 1;
+        }
         else if ((a.at || 0) > (same.at || 0)) { same.a = a.a; same.at = a.at; stat.updated++; }
       });
     });
@@ -1898,6 +2013,7 @@
           res.added = merged.added;
           res.updated = merged.updated;
           save(); renderAll();
+          if (merged.newBy) { addUnread(merged.newBy); save(); }
         } catch (e) {
           log('对方的数据解不开，这次只推送不合并');
         }
@@ -2600,6 +2716,52 @@
   const PAGES = ['home', 'days', 'memories', 'capsule', 'bucket'];
   let currentPage = 'home';
 
+  /* 哪个板块有新东西：key 和底部那五个按钮一一对应 */
+  const UNREAD_OF_PAGE = {
+    moments: 'memories', days: 'days', capsules: 'capsule', qa: 'capsule', bucket: 'bucket', checkins: 'home'
+  };
+
+  function addUnread(map) {
+    if (!map) return;
+    let changed = false;
+    Object.keys(map).forEach((kind) => {
+      const n = Number(map[kind]) || 0;
+      if (!n) return;
+      // 正停在这个板块，就不必提示了
+      if (UNREAD_OF_PAGE[kind] === currentPage) return;
+      state.unread = state.unread || {};
+      state.unread[kind] = (state.unread[kind] || 0) + n;
+      changed = true;
+    });
+    if (changed) renderUnread();
+    return changed;
+  }
+
+  function renderUnread() {
+    const byPage = {};
+    Object.keys(state.unread || {}).forEach((kind) => {
+      const page = UNREAD_OF_PAGE[kind];
+      if (!page) return;
+      byPage[page] = (byPage[page] || 0) + (Number(state.unread[kind]) || 0);
+    });
+    $$('.tab').forEach((t) => {
+      const dot = t.querySelector('.tab-dot');
+      if (!dot) return;
+      const n = byPage[t.dataset.page] || 0;
+      dot.hidden = !n;
+      if (n) dot.textContent = n > 9 ? '9+' : String(n);
+    });
+  }
+
+  function clearUnread(page) {
+    let changed = false;
+    Object.keys(UNREAD_OF_PAGE).forEach((kind) => {
+      if (UNREAD_OF_PAGE[kind] !== page) return;
+      if (state.unread && state.unread[kind]) { state.unread[kind] = 0; changed = true; }
+    });
+    if (changed) { save(); renderUnread(); }
+  }
+
   function go(page) {
     if (!page) return;
     currentPage = page;
@@ -2610,6 +2772,7 @@
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     renderPage(page);
+    clearUnread(page);
   }
 
   function route() {
@@ -2698,6 +2861,10 @@
       renderMemories();
     });
     $('#timeline').addEventListener('click', (e) => {
+      const cmt = e.target.closest('[data-cmt]');
+      if (cmt) { openCommentModal(cmt.dataset.cmt); return; }
+      const hug = e.target.closest('[data-hug]');
+      if (hug) { toggleHug(hug.dataset.hug); return; }
       const del = e.target.closest('[data-del-mem]');
       const photo = e.target.closest('.tl-img');
       if (photo && !del) {
@@ -2949,6 +3116,7 @@
     // 星空只是背景：画不出来也不能把整册拖垮
     try { initSky(); } catch (e) { console.warn('星空没点亮：', e); }
     renderAll();
+    renderUnread();
     route();
 
     // 自动同步：打开 App 对齐一次，从后台切回来再对齐一次
