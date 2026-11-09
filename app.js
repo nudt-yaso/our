@@ -717,7 +717,7 @@
               <span aria-hidden="true">💬</span>${cmts.length ? `回一句 · ${cmts.length}` : '回一句'}
             </button>
             <button class="tl-act-btn${hugged ? ' is-on' : ''}" data-hug="${x.id}" type="button">
-              <span aria-hidden="true">🫶</span>${hugList.length ? `抱抱 ${hugList.length}` : '抱抱'}
+              ${HUG_ICON}${hugList.length ? `抱抱 ${hugList.length}` : '抱抱'}
             </button>
             <button class="tl-act-btn${liked ? ' is-on' : ''}" data-like="${x.id}" type="button">
               <span class="like-ico" aria-hidden="true">❤️</span>${likeList.length ? `喜欢 ${likeList.length}` : '喜欢'}
@@ -732,6 +732,19 @@
       return `<div class="tl-day"><div class="tl-day-label">${label}</div>${cards}</div>`;
     }).join('');
   }
+
+  /* 抱抱的小人：黄脑袋、绿衣服、张开手（画的，不依赖 emoji 字体） */
+  const HUG_ICON = `<svg class="ico-hug" viewBox="0 0 22 22" aria-hidden="true">
+    <path d="M8 13.4 4.1 15.5" stroke="#F6C445" stroke-width="2.3" stroke-linecap="round"/>
+    <path d="M14 13.4 17.9 15.5" stroke="#F6C445" stroke-width="2.3" stroke-linecap="round"/>
+    <circle cx="3" cy="16.2" r="1.5" fill="#F6C445"/>
+    <circle cx="19" cy="16.2" r="1.5" fill="#F6C445"/>
+    <rect x="6.5" y="11.6" width="9" height="9.6" rx="3.1" fill="#4E9A63"/>
+    <circle cx="11" cy="6.6" r="5.2" fill="#F6C445"/>
+    <circle cx="9.2" cy="6.2" r=".82" fill="#41342a"/>
+    <circle cx="12.8" cy="6.2" r=".82" fill="#41342a"/>
+    <path d="M9.5 8.8c.45.5 1 .8 1.5.8s1.05-.3 1.5-.8" stroke="#41342a" stroke-width=".85" stroke-linecap="round" fill="none" opacity=".78"/>
+  </svg>`;
 
   /* 在她写的那条下面回一句 */
   function openCommentModal(id) {
@@ -792,8 +805,8 @@
     if (at >= 0) { m.hugs.splice(at, 1); toast('收回了'); }
     else {
       m.hugs.push({ by: me, at: Date.now() });
-      burst(window.innerWidth / 2, window.innerHeight * 0.6, '❤️', 10);
-      toast('喜欢 ❤️');
+      burst(window.innerWidth / 2, window.innerHeight * 0.6, '🤗', 10);
+      toast('抱一个 🤗');
     }
     save(); renderMemories(); renderHome();
   }
