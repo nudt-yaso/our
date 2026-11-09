@@ -2796,6 +2796,9 @@
         if (total > 0) navigator.setAppBadge(total).catch(() => { });
         else if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => { });
       }
+      // 自己打的安卓壳：交给原生发一条静音通知，桌面图标上就会冒小点/数字
+      const nat = window.ShijiuNative;
+      if (nat && typeof nat.setBadge === 'function') nat.setBadge(total);
     } catch (e) { /* 不支持就算了，不影响 App 内的小红点 */ }
   }
 
