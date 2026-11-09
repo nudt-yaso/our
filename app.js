@@ -693,6 +693,8 @@
         const cmts = (x.cmts || []).filter((c) => c && (c.text || '').trim());
         const hugList = (x.hugs || []).filter((h) => h && h.by);
         const hugged = hugList.some((h) => (h.by || '') === me);
+        const likeList = (x.likes || []).filter((h) => h && h.by);
+        const liked = likeList.some((h) => (h.by || '') === me);
         const showCmts = cmts.slice(-2);
         const cmtHtml = cmts.length
           ? `<div class="tl-cmts">${cmts.length > 2 ? `<div class="tl-cmt-more">还有 ${cmts.length - 2} 句</div>` : ''}
@@ -715,7 +717,10 @@
               <span aria-hidden="true">💬</span>${cmts.length ? `回一句 · ${cmts.length}` : '回一句'}
             </button>
             <button class="tl-act-btn${hugged ? ' is-on' : ''}" data-hug="${x.id}" type="button">
-              <span class="like-ico" aria-hidden="true">❤️</span>${hugList.length ? `喜欢 ${hugList.length}` : '喜欢'}
+              <span aria-hidden="true">🫶</span>${hugList.length ? `抱抱 ${hugList.length}` : '抱抱'}
+            </button>
+            <button class="tl-act-btn${liked ? ' is-on' : ''}" data-like="${x.id}" type="button">
+              <span class="like-ico" aria-hidden="true">❤️</span>${likeList.length ? `喜欢 ${likeList.length}` : '喜欢'}
             </button>
           </div>
           <div class="tl-foot">
@@ -763,6 +768,21 @@
   }
 
   /* 喜欢：一人一下，再点一下取消 */
+  function toggleLike(id) {
+    const m = state.moments.find((x) => x && x.id === id);
+    if (!m) return;
+    m.likes = Array.isArray(m.likes) ? m.likes : [];
+    const me = state.config.me || '我';
+    const at = m.likes.findIndex((h) => (h.by || '') === me);
+    if (at >= 0) { m.likes.splice(at, 1); toast('收回了'); }
+    else {
+      m.likes.push({ by: me, at: Date.now() });
+      burst(window.innerWidth / 2, window.innerHeight * 0.6, '❤️', 10);
+      toast('喜欢 ❤️');
+    }
+    save(); renderMemories(); renderHome();
+  }
+
   function toggleHug(id) {
     const m = state.moments.find((x) => x && x.id === id);
     if (!m) return;
@@ -1541,6 +1561,11 @@
         (m.hugs || []).forEach((h) => {
           if (!h || !(h.by || '')) return;
           if (!mine.hugs.some((z) => (z.by || '') === (h.by || ''))) { mine.hugs.push(h); stat.updated++; }
+        });
+        if (!Array.isArray(mine.likes)) mine.likes = [];
+        (m.likes || []).forEach((h) => {
+          if (!h || !(h.by || '')) return;
+          if (!mine.likes.some((z) => (z.by || '') === (h.by || ''))) { mine.likes.push(h); stat.updated++; }
         });
       }
     });
@@ -2865,6 +2890,8 @@
       if (cmt) { openCommentModal(cmt.dataset.cmt); return; }
       const hug = e.target.closest('[data-hug]');
       if (hug) { toggleHug(hug.dataset.hug); return; }
+      const like = e.target.closest('[data-like]');
+      if (like) { toggleLike(like.dataset.like); return; }
       const del = e.target.closest('[data-del-mem]');
       const photo = e.target.closest('.tl-img');
       if (photo && !del) {
