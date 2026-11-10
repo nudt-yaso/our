@@ -1348,7 +1348,14 @@
       <div class="mom-add">
         <input type="text" id="mood-new-e" maxlength="4" placeholder="🙂">
         <input type="text" id="mood-new-k" maxlength="8" placeholder="名字，比如 想抱抱">
+        <button class="btn btn-sm" id="mood-pick-g" type="button">从大全选</button>
         <button class="btn btn-sm" id="mood-add-btn" type="button">加上</button>
+      </div>
+      <div class="emoji-all" id="mood-emoji-all" hidden>
+        ${(D.EMOJI_GROUPS || []).map((g, gi) => `
+          <button class="emoji-cat${gi === 0 ? ' is-on' : ''}" data-eg="${gi}" type="button">${esc(g.k)}</button>
+        `).join('')}
+        <div class="emoji-grid" id="mood-emoji-grid"></div>
       </div>
       <div class="qk-list">
         ${customRows ? `<div class="qk-sec">自己加的</div>${customRows}` : ''}
@@ -1370,6 +1377,35 @@
       };
       $('#mood-add-btn', root).onclick = add;
       $('#mood-new-k', root).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') add(); });
+
+      // 表情大全：分好组，点一下就直接填进左边那个格子里
+      const allBox = $('#mood-emoji-all', root);
+      const grid = $('#mood-emoji-grid', root);
+      const groups = D.EMOJI_GROUPS || [];
+      let egCur = 0;
+      const drawEmoji = () => {
+        const g = groups[egCur] || { list: [] };
+        grid.innerHTML = g.list.map((e) => `<button class="emoji-cell" data-emoji="${e}" type="button">${e}</button>`).join('');
+      };
+      $$('.emoji-cat', root).forEach((b) => {
+        b.onclick = () => {
+          egCur = Number(b.dataset.eg) || 0;
+          $$('.emoji-cat', root).forEach((x) => x.classList.toggle('is-on', x === b));
+          drawEmoji();
+        };
+      });
+      drawEmoji();
+      $('#mood-pick-g', root).onclick = () => {
+        allBox.hidden = !allBox.hidden;
+        $('#mood-pick-g', root).textContent = allBox.hidden ? '从大全选' : '收起';
+      };
+      grid.addEventListener('click', (ev) => {
+        const c = ev.target.closest('[data-emoji]');
+        if (!c) return;
+        $('#mood-new-e', root).value = c.dataset.emoji;
+        $$('.emoji-cell', grid).forEach((x) => x.classList.toggle('is-on', x === c));
+        try { $('#mood-new-k', root).focus(); } catch (e) { }
+      });
       $('.qk-list', root).addEventListener('click', (ev) => {
         const h = ev.target.closest('[data-mh]');
         if (h) {
