@@ -1394,6 +1394,23 @@ html[data-theme="night"] .field input[type="date"]{ color-scheme:dark; }
 .emoji-pick button:hover{ background:color-mix(in srgb, var(--ink) 5%, transparent); transform:translateY(-1px); }
 .emoji-pick button.is-on{ border-color:var(--vermilion); background:var(--vermilion-soft); }
 
+/* 心情：表情 + 名字，点哪个都看得懂是什么意思 */
+.emoji-pick .mood-pill{
+  width:auto; height:auto; min-width:0;
+  display:inline-flex; align-items:center; gap:6px;
+  padding:7px 12px 7px 9px; border-radius:999px;
+}
+.mood-pill .mood-e{ font-size:16px; line-height:1; }
+.mood-pill .mood-k{ font-size:12px; letter-spacing:.04em; color:var(--dim); }
+.mood-pill.is-on .mood-k{ color:var(--vermilion); }
+.mood-e{ font-size:16px; line-height:1; }
+.mom-add{ display:flex; gap:8px; margin:10px 0 12px; }
+.mom-add input{
+  flex:1; min-width:0; padding:9px 12px; border-radius:10px;
+  border:1px solid var(--rule); background:var(--paper); color:var(--ink); font-size:13px;
+}
+.mom-add input#mood-new-e{ flex:none; width:58px; text-align:center; font-size:15px; }
+
 .img-drop{
   display:flex; align-items:center; gap:10px;
   padding:11px; border-radius:var(--r-sm);
