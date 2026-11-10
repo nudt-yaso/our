@@ -103,6 +103,8 @@
       qaBank: [],
       qaHidden: [],
       qaPick: null,
+      moods: [],
+      moodsHidden: [],
       unread: {},
       deleted: {},
       seen: { banner: false }
@@ -131,6 +133,8 @@
         qaBank: Array.isArray(o.qaBank) ? o.qaBank : [],
         qaHidden: Array.isArray(o.qaHidden) ? o.qaHidden : [],
         qaPick: o.qaPick && typeof o.qaPick === 'object' ? o.qaPick : null,
+        moods: Array.isArray(o.moods) ? o.moods : [],
+        moodsHidden: Array.isArray(o.moodsHidden) ? o.moodsHidden : [],
         unread: o.unread && typeof o.unread === 'object' ? o.unread : {},
         deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
         seen: { ...base.seen, ...(o.seen || {}) }
@@ -351,21 +355,50 @@
     if (e.key === 'Escape' && !modalRoot.hidden) closeModal();
   });
 
+  /* 心情清单：内置的（可以藏） + 自己加的 */
+  function moodList() {
+    const hidden = new Set((state.moodsHidden || []).map(Number));
+    const builtin = D.MOODS.map((m, i) => ({ key: String(i), e: m.e, k: m.k, builtin: true })).filter((x) => !hidden.has(Number(x.key)));
+    const custom = (state.moods || []).filter((m) => m && m.e && m.k).map((m) => ({ key: m.id, e: m.e, k: m.k, builtin: false }));
+    return builtin.concat(custom);
+  }
+
+  /* 一条记录的心情：老记录存序号，新记录可能存自定义 id */
+  function moodOf(rec) {
+    if (!rec) return null;
+    if (rec.moodId) {
+      const c = (state.moods || []).find((m) => m && m.id === rec.moodId);
+      if (c) return c;
+    }
+    const i = rec.mood != null ? rec.mood : rec.m;
+    const b = D.MOODS[Number(i)];
+    return b || null;
+  }
+
   function moodPicker(selected) {
+    const list = moodList();
     return `<div class="emoji-pick" data-mood-pick>
-      ${D.MOODS.map((m, i) => `<button type="button" data-mood="${i}" class="${i === selected ? 'is-on' : ''}" title="${esc(m.k)}">${m.e}</button>`).join('')}
+      ${list.map((m) => `<button type="button" class="mood-pill${m.key === String(selected) ? ' is-on' : ''}" data-mood="${esc(m.key)}" title="${esc(m.k)}">
+        <span class="mood-e">${m.e}</span><span class="mood-k">${esc(m.k)}</span>
+      </button>`).join('')}
     </div>`;
   }
 
   function bindMoodPicker(scope, initial) {
-    let cur = initial;
+    let cur = initial == null ? '' : String(initial);
     scope.addEventListener('click', (e) => {
       const b = e.target.closest('[data-mood]');
       if (!b) return;
-      cur = Number(b.dataset.mood);
-      $$('[data-mood]', scope).forEach((x) => x.classList.toggle('is-on', Number(x.dataset.mood) === cur));
+      cur = b.dataset.mood;
+      $$('[data-mood]', scope).forEach((x) => x.classList.toggle('is-on', x.dataset.mood === cur));
     });
-    return () => cur;
+    // 返回 { mood, moodId }：内置的给序号，自己加的给 id
+    return () => {
+      if (cur === '') return { mood: 0, moodId: '' };
+      const asNum = Number(cur);
+      if (!Number.isNaN(asNum) && String(asNum) === cur) return { mood: asNum, moodId: '' };
+      return { mood: null, moodId: cur };
+    };
   }
 
   /* ==================== 首页 ==================== */
@@ -434,17 +467,17 @@
     // 我打过卡，就在首页钤一枚「今日已记」
     const heroCard = document.querySelector('.hero');
     if (heroCard) heroCard.classList.toggle('is-stamped', !!mineCk);
-    const moodOf = (e) => (D.MOODS[Number(e && e.m) || 0] || D.MOODS[0]);
+    const moodInfo = (e) => (moodOf(e) || D.MOODS[0]);
     if (mineCk && theirCk.length) {
       $('#h-checkin-t').textContent = '两个人都打了';
-      const mineTxt = (mineCk.n || '').trim() || moodOf(mineCk).k;
+      const mineTxt = (mineCk.n || '').trim() || moodInfo(mineCk).k;
       $('#h-checkin-s').textContent = `连续 ${streak()} 天 · 我：${mineTxt}`;
     } else if (mineCk) {
       $('#h-checkin-t').textContent = '我打了 · 等 TA';
       const note = (mineCk.n || '').trim();
       $('#h-checkin-s').textContent = note
-        ? `连续 ${streak()} 天 · ${moodOf(mineCk).e} ${note}`
-        : `连续 ${streak()} 天 · ${moodOf(mineCk).e} ${moodOf(mineCk).k}`;
+        ? `连续 ${streak()} 天 · ${moodInfo(mineCk).e} ${note}`
+        : `连续 ${streak()} 天 · ${moodInfo(mineCk).e} ${moodInfo(mineCk).k}`;
     } else if (theirCk.length) {
       const e = theirCk[0];
       $('#h-checkin-t').textContent = `${e.by || 'TA'} 打了`;
@@ -519,7 +552,7 @@
       return;
     }
     box.innerHTML = list.map((x) => {
-      const moodObj = D.MOODS[x.mood] || null;
+      const moodObj = moodOf(x) || null;
       const d = parseDT(x.at);
       const text = x.kind === 'heart' ? x.text : (x.title || x.text);
       return `<button class="mini" type="button" data-goto="memories">
@@ -686,7 +719,7 @@
       const dn = dayIndex(g.d);
       const label = dn > 0 ? `${fmtDate(g.d)} · 在一起第 ${dn} 天` : fmtDate(g.d);
       const cards = g.items.map((x) => {
-        const moodObj = D.MOODS[x.mood] || null;
+        const moodObj = moodOf(x);
         const d = parseDT(x.at);
         const title = x.kind === 'memory' ? (x.title || '无题') : '心动瞬间';
         const me = state.config.me || '我';
@@ -865,9 +898,10 @@
         const at = $('#mem-at', root).value;
         if (!text) { toast('写点什么吧'); return; }
         if (!at) { toast('选一个时间'); return; }
+        const moodPick = getMood();
         state.moments.push({
           id: uid(), kind, at, text, title,
-          mood: getMood(), img: imgData,
+          mood: moodPick.mood, moodId: moodPick.moodId, img: imgData,
           by: state.config.me || ''
         });
         save();
@@ -1290,6 +1324,85 @@
     });
   }
 
+  /* 心情表情管理：内置的能藏，自建的能改能删，还能自己加 */
+  function openMoodBankModal() {
+    const hidden = new Set((state.moodsHidden || []).map(Number));
+    const builtinRows = D.MOODS.map((m, i) => `
+      <div class="qk-row${hidden.has(i) ? ' is-off' : ''}">
+        <span class="mood-e">${m.e}</span>
+        <span class="qk-text">${esc(m.k)}</span>
+        <button class="qk-btn" data-mh="${i}" type="button">${hidden.has(i) ? '放回' : '藏起来'}</button>
+      </div>`).join('');
+    const custom = (state.moods || []).filter((m) => m && m.e && m.k);
+    const customRows = custom.map((m) => `
+      <div class="qk-row">
+        <span class="mood-e">${esc(m.e)}</span>
+        <span class="qk-text">${esc(m.k)}</span>
+        <button class="qk-btn" data-me="${m.id}" type="button">改</button>
+        <button class="qk-btn is-danger" data-md="${m.id}" type="button">删</button>
+      </div>`).join('');
+
+    openModal(`
+      <h3>心情表情</h3>
+      <p class="modal-sub">现在 ${moodList().length} 个在用。自己加的能改能删，内置的可以藏起来。</p>
+      <div class="mom-add">
+        <input type="text" id="mood-new-e" maxlength="4" placeholder="🙂">
+        <input type="text" id="mood-new-k" maxlength="8" placeholder="名字，比如 想抱抱">
+        <button class="btn btn-sm" id="mood-add-btn" type="button">加上</button>
+      </div>
+      <div class="qk-list">
+        ${customRows ? `<div class="qk-sec">自己加的</div>${customRows}` : ''}
+        <div class="qk-sec">内置的 ${D.MOODS.length} 个</div>
+        ${builtinRows}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" data-close="1" type="button">好了</button>
+      </div>
+    `, (root) => {
+      const add = () => {
+        const e = $('#mood-new-e', root).value.trim().slice(0, 4);
+        const k = $('#mood-new-k', root).value.trim().slice(0, 8);
+        if (!e || !k) { toast('表情和名字都要有'); return; }
+        state.moods = state.moods || [];
+        state.moods.push({ id: uid(), e, k });
+        save(); closeModal(); setTimeout(openMoodBankModal, 90);
+        toast('加上了');
+      };
+      $('#mood-add-btn', root).onclick = add;
+      $('#mood-new-k', root).addEventListener('keydown', (ev) => { if (ev.key === 'Enter') add(); });
+      $('.qk-list', root).addEventListener('click', (ev) => {
+        const h = ev.target.closest('[data-mh]');
+        if (h) {
+          const i = Number(h.dataset.mh);
+          state.moodsHidden = state.moodsHidden || [];
+          const at = state.moodsHidden.indexOf(i);
+          if (at >= 0) state.moodsHidden.splice(at, 1); else state.moodsHidden.push(i);
+          save(); closeModal(); setTimeout(openMoodBankModal, 80);
+          return;
+        }
+        const ed = ev.target.closest('[data-me]');
+        if (ed) {
+          const item = (state.moods || []).find((m) => m.id === ed.dataset.me);
+          if (!item) return;
+          const k = prompt('改个名字：', item.k);
+          if (k == null) return;
+          if (!k.trim()) { toast('名字不能空着'); return; }
+          item.k = k.trim().slice(0, 8);
+          save(); closeModal(); setTimeout(openMoodBankModal, 80);
+          toast('改好了');
+          return;
+        }
+        const dl = ev.target.closest('[data-md]');
+        if (dl) {
+          if (!confirm('删掉这个心情？之前用过它的记录会显示成默认的。')) return;
+          state.moods = (state.moods || []).filter((m) => m.id !== dl.dataset.md);
+          save(); closeModal(); setTimeout(openMoodBankModal, 80);
+          toast('删掉了');
+        }
+      });
+    });
+  }
+
   /* 题库管理：内置的能藏，自建的能改能删，还能自己加 */
   function openQaBankModal() {
     const hidden = new Set((state.qaHidden || []).map(Number));
@@ -1369,7 +1482,7 @@
     const tKey = ymd(new Date());
     const mineOld = ckMine(tKey);
     const theirs = ckTheirs(tKey);
-    const mi0 = mineOld ? (Number(mineOld.m) || 0) : 0;
+    const mi0 = mineOld ? (mineOld.moodId || (mineOld.m != null ? String(Number(mineOld.m) || 0) : '0')) : '0';
     const note0 = mineOld ? (mineOld.n || '') : '';
     const sub = mineOld
       ? '你今天已经打过卡了，想改随时改。'
@@ -1378,7 +1491,7 @@
         : '打个卡，就算今天也认真喜欢过了。');
     const theirLine = theirs.length
       ? `<div class="ck-theirs">${theirs.map((e) => {
-        const m = D.MOODS[Number(e.m) || 0] || D.MOODS[0];
+        const m = moodOf(e) || D.MOODS[0];
         return `<div class="qa-theirs"><span class="qa-who">${esc(e.by || 'TA')}</span>${m.e} ${esc(e.n || m.k)}</div>`;
       }).join('')}</div>`
       : '';
@@ -1405,7 +1518,7 @@
         if (!Array.isArray(box.entries)) box.entries = [];
         const me = ckWho();
         const idx = box.entries.findIndex((e) => (e.by || '') === me);
-        const rec = { by: me, m: mi, n: note, at: Date.now(), bySure: true };
+        const rec = { by: me, m: mi.mood, moodId: mi.moodId, n: note, at: Date.now(), bySure: true };
         if (idx >= 0) box.entries[idx] = rec;
         else box.entries.push(rec);
         state.checkins[date] = box;
@@ -1424,7 +1537,7 @@
     const rows = days.map((k) => {
       const d = parseDT(k);
       const list = ckEntries(k).map((e) => {
-        const m = D.MOODS[Number(e.m) || 0] || D.MOODS[0];
+        const m = moodOf(e) || D.MOODS[0];
         const sure = e.bySure !== false;
         return `<div class="ck-p">
           <button class="qa-who${sure ? '' : ' is-unsure'}" data-ck-who="${k}" data-ck-by="${esc(e.by || '')}" data-ck-at="${Number(e.at) || 0}" type="button" title="点一下可以改是谁写的">${esc(e.by || '不知道谁')}${sure ? '' : '？'}</button>
@@ -1716,6 +1829,16 @@
     (incoming.qaHidden || []).forEach((i) => {
       const n = Number(i);
       if (!Number.isNaN(n) && state.qaHidden.indexOf(n) === -1) { state.qaHidden.push(n); stat.updated++; }
+    });
+
+    // 自定义心情：按 id 并
+    (incoming.moods || []).forEach((m) => {
+      if (!m || !m.id || !(m.e || '').trim() || !(m.k || '').trim()) return;
+      if (!(state.moods || []).some((x) => x && x.id === m.id)) { state.moods.push(m); stat.added++; }
+    });
+    (incoming.moodsHidden || []).forEach((i) => {
+      const n = Number(i);
+      if (!Number.isNaN(n) && state.moodsHidden.indexOf(n) === -1) { state.moodsHidden.push(n); stat.updated++; }
     });
 
     // 本机还是默认值时才采用对方的称呼和起点，避免互相改花
@@ -2375,6 +2498,10 @@
         <button class="btn btn-sm" id="set-qbank" type="button">管理</button>
       </div>
       <div class="set-row">
+        <div class="set-label"><b>心情表情</b><span>现在 ${moodList().length} 个在用 · 可以自己加，也能把不合适的藏起来</span></div>
+        <button class="btn btn-sm" id="set-mood" type="button">管理</button>
+      </div>
+      <div class="set-row">
         <div class="set-label"><b>导出同步包</b><span>一个 JSON 文件，发给她，或带到新手机</span></div>
         <button class="btn btn-sm" id="set-export" type="button">导出</button>
       </div>
@@ -2423,6 +2550,7 @@
 
       $('#set-sync', root).onclick = () => { closeModal(); setTimeout(openSyncModal, 120); };
       $('#set-qbank', root).onclick = () => { closeModal(); setTimeout(openQaBankModal, 120); };
+      $('#set-mood', root).onclick = () => { closeModal(); setTimeout(openMoodBankModal, 120); };
 
       $('#set-install', root).onclick = () => {
         if (location.protocol === 'file:') {
